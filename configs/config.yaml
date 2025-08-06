@@ -1,0 +1,68 @@
+# 配置文件
+
+# 数据配置
+data:
+  data_dir: "data"
+  test_ratio: 0.2
+  val_ratio: 0.1
+  negative_sampling_ratio: 1.0  # 负样本与正样本的比例
+  target_relations:  # 目标关系类型
+    - "indication"
+    - "contraindication" 
+    - "off-label use"
+
+# 模型配置
+model:
+  hidden_dim: 128
+  num_layers: 2
+  dropout: 0.1
+  num_bases: null  # 如果为null，则不使用basis decomposition
+  num_blocks: null  # 如果为null，则不使用block decomposition
+
+# 训练配置
+training:
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 1e-5
+  num_epochs: 100
+  patience: 10  # early stopping patience
+  gradient_clip: 1.0
+  
+  # 学习率调度
+  scheduler:
+    type: "ReduceLROnPlateau"  # StepLR, ExponentialLR, ReduceLROnPlateau
+    factor: 0.5
+    patience: 5
+    min_lr: 1e-6
+
+# 评估配置
+evaluation:
+  metrics:
+    - "auc"
+    - "ap"  # average precision
+    - "precision_at_k"
+    - "recall_at_k"
+  k_values: [10, 50, 100]
+  
+# 设备配置
+device: "cuda"  # cuda, cpu, auto
+
+# 日志配置
+logging:
+  log_dir: "logs"
+  save_model: true
+  model_dir: "checkpoints"
+  log_interval: 10  # 每多少个batch记录一次
+  
+# 随机种子
+seed: 42
+
+# 实验配置
+experiment:
+  name: "drugdisease_rgcn"
+  description: "Drug-Disease relation prediction using RGCN on PrimeKG"
+  tags:
+    - "rgcn"
+    - "primekg"
+    - "drug-disease"
+    - "link-prediction"

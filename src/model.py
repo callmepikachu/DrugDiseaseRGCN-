@@ -1,0 +1,309 @@
+"""
+RGCN模型定义
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import RGCNConv, global_mean_pool
+from torch_geometric.data import HeteroData
+from typing import Dict, List, Tuple, Optional
+import math
+
+
+class RGCNEncoder(nn.Module):
+    """RGCN编码器"""
+    
+    def __init__(
+        self,
+        num_nodes: int,
+        num_relations: int,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        num_bases: Optional[int] = None,
+        num_blocks: Optional[int] = None
+    ):
+        super(RGCNEncoder, self).__init__()
+        
+        self.num_nodes = num_nodes
+        self.num_relations = num_relations
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.dropout = dropout
+        
+        # 节点嵌入
+        self.node_embedding = nn.Embedding(num_nodes, hidden_dim)
+        
+        # RGCN层
+        self.rgcn_layers = nn.ModuleList()
+        
+        for i in range(num_layers):
+            if i == 0:
+                in_dim = hidden_dim
+            else:
+                in_dim = hidden_dim
+                
+            self.rgcn_layers.append(
+                RGCNConv(
+                    in_channels=in_dim,
+                    out_channels=hidden_dim,
+                    num_relations=num_relations,
+                    num_bases=num_bases,
+                    num_blocks=num_blocks,
+                    aggr='mean'
+                )
+            )
+        
+        self.dropout_layer = nn.Dropout(dropout)
+        
+        # 初始化参数
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        """初始化参数"""
+        nn.init.xavier_uniform_(self.node_embedding.weight)
+        
+        for layer in self.rgcn_layers:
+            if hasattr(layer, 'weight'):
+                nn.init.xavier_uniform_(layer.weight)
+    
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
+        """前向传播"""
+        # 如果输入是节点索引，使用嵌入
+        if x.dim() == 1:
+            x = self.node_embedding(x)
+        
+        # 通过RGCN层
+        for i, layer in enumerate(self.rgcn_layers):
+            x = layer(x, edge_index, edge_type)
+            
+            if i < len(self.rgcn_layers) - 1:
+                x = F.relu(x)
+                x = self.dropout_layer(x)
+        
+        return x
+
+
+class LinkPredictor(nn.Module):
+    """链接预测器"""
+    
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_relations: int,
+        dropout: float = 0.1
+    ):
+        super(LinkPredictor, self).__init__()
+        
+        self.hidden_dim = hidden_dim
+        self.num_relations = num_relations
+        
+        # 关系嵌入
+        self.relation_embedding = nn.Embedding(num_relations, hidden_dim)
+        
+        # MLP预测器
+        self.predictor = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1)
+        )
+        
+        self._init_parameters()
+    
+    def _init_parameters(self):
+        """初始化参数"""
+        nn.init.xavier_uniform_(self.relation_embedding.weight)
+        
+        for layer in self.predictor:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+    
+    def forward(
+        self,
+        node_embeddings: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor,
+        relation_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """前向传播"""
+        # 获取头尾节点嵌入
+        head_emb = node_embeddings[head_indices]  # [batch_size, hidden_dim]
+        tail_emb = node_embeddings[tail_indices]  # [batch_size, hidden_dim]
+        
+        # 获取关系嵌入
+        rel_emb = self.relation_embedding(relation_indices)  # [batch_size, hidden_dim]
+        
+        # 拼接特征
+        combined = torch.cat([head_emb, rel_emb, tail_emb], dim=-1)  # [batch_size, hidden_dim * 3]
+        
+        # 预测
+        scores = self.predictor(combined)  # [batch_size, 1]
+        
+        return scores.squeeze(-1)
+
+
+class DrugDiseaseRGCN(nn.Module):
+    """药物-疾病关系预测RGCN模型"""
+    
+    def __init__(
+        self,
+        num_nodes: int,
+        num_relations: int,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.1,
+        num_bases: Optional[int] = None,
+        num_blocks: Optional[int] = None
+    ):
+        super(DrugDiseaseRGCN, self).__init__()
+        
+        self.num_nodes = num_nodes
+        self.num_relations = num_relations
+        self.hidden_dim = hidden_dim
+        
+        # RGCN编码器
+        self.encoder = RGCNEncoder(
+            num_nodes=num_nodes,
+            num_relations=num_relations,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+            num_bases=num_bases,
+            num_blocks=num_blocks
+        )
+        
+        # 链接预测器
+        self.link_predictor = LinkPredictor(
+            hidden_dim=hidden_dim,
+            num_relations=num_relations,
+            dropout=dropout
+        )
+    
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_type: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor,
+        relation_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """前向传播"""
+        # 编码节点
+        node_embeddings = self.encoder(x, edge_index, edge_type)
+        
+        # 预测链接
+        scores = self.link_predictor(
+            node_embeddings,
+            head_indices,
+            tail_indices,
+            relation_indices
+        )
+        
+        return scores
+    
+    def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
+        """编码节点"""
+        return self.encoder(x, edge_index, edge_type)
+    
+    def predict_links(
+        self,
+        node_embeddings: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor,
+        relation_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """预测链接"""
+        return self.link_predictor(
+            node_embeddings,
+            head_indices,
+            tail_indices,
+            relation_indices
+        )
+
+
+class DistMultDecoder(nn.Module):
+    """DistMult解码器（替代方案）"""
+    
+    def __init__(self, hidden_dim: int, num_relations: int):
+        super(DistMultDecoder, self).__init__()
+        
+        self.relation_embedding = nn.Embedding(num_relations, hidden_dim)
+        nn.init.xavier_uniform_(self.relation_embedding.weight)
+    
+    def forward(
+        self,
+        node_embeddings: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor,
+        relation_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """DistMult评分函数"""
+        head_emb = node_embeddings[head_indices]
+        tail_emb = node_embeddings[tail_indices]
+        rel_emb = self.relation_embedding(relation_indices)
+        
+        # DistMult: <h, r, t> = sum(h * r * t)
+        scores = torch.sum(head_emb * rel_emb * tail_emb, dim=-1)
+        
+        return scores
+
+
+class ComplExDecoder(nn.Module):
+    """ComplEx解码器（替代方案）"""
+    
+    def __init__(self, hidden_dim: int, num_relations: int):
+        super(ComplExDecoder, self).__init__()
+        
+        assert hidden_dim % 2 == 0, "hidden_dim必须是偶数"
+        
+        self.hidden_dim = hidden_dim
+        self.relation_embedding = nn.Embedding(num_relations, hidden_dim)
+        nn.init.xavier_uniform_(self.relation_embedding.weight)
+    
+    def forward(
+        self,
+        node_embeddings: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor,
+        relation_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """ComplEx评分函数"""
+        head_emb = node_embeddings[head_indices]
+        tail_emb = node_embeddings[tail_indices]
+        rel_emb = self.relation_embedding(relation_indices)
+        
+        # 分离实部和虚部
+        head_real, head_img = torch.chunk(head_emb, 2, dim=-1)
+        tail_real, tail_img = torch.chunk(tail_emb, 2, dim=-1)
+        rel_real, rel_img = torch.chunk(rel_emb, 2, dim=-1)
+        
+        # ComplEx评分
+        score_real = torch.sum(
+            head_real * rel_real * tail_real +
+            head_real * rel_img * tail_img +
+            head_img * rel_real * tail_img -
+            head_img * rel_img * tail_real,
+            dim=-1
+        )
+        
+        return score_real
+
+
+def create_model(
+    num_nodes: int,
+    num_relations: int,
+    model_config: Dict
+) -> DrugDiseaseRGCN:
+    """创建模型"""
+    return DrugDiseaseRGCN(
+        num_nodes=num_nodes,
+        num_relations=num_relations,
+        **model_config
+    )
