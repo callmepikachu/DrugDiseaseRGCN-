@@ -52,14 +52,21 @@ pip install -r requirements.txt
 python src/data_loader.py --download
 ```
 
-### 3. 训练模型
+### 3. 数据处理
+
+```bash
+# 处理PrimeKG数据，创建图结构
+python src/data_loader.py --process
+```
+
+### 4. 训练模型
 
 ```bash
 # 训练RGCN模型
 python src/train.py --config configs/config.yaml
 ```
 
-### 4. 评估模型
+### 5. 评估模型
 
 ```bash
 # 评估模型性能
