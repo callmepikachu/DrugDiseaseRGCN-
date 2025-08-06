@@ -5,7 +5,7 @@ data:
   data_dir: "data"
   test_ratio: 0.2
   val_ratio: 0.1
-  negative_sampling_ratio: 1.0  # 负样本与正样本的比例
+  negative_sampling_ratio: 0.5  # 负样本与正样本的比例
   target_relations:  # 目标关系类型
     - "indication"
     - "contraindication" 
@@ -13,7 +13,7 @@ data:
 
 # 模型配置
 model:
-  hidden_dim: 128
+  hidden_dim: 64
   num_layers: 2
   dropout: 0.1
   num_bases: null  # 如果为null，则不使用basis decomposition
@@ -21,10 +21,10 @@ model:
 
 # 训练配置
 training:
-  batch_size: 1024
+  batch_size: 512
   learning_rate: 0.001
   weight_decay: 1e-5
-  num_epochs: 100
+  num_epochs: 50
   patience: 10  # early stopping patience
   gradient_clip: 1.0
   
@@ -45,7 +45,7 @@ evaluation:
   k_values: [10, 50, 100]
   
 # 设备配置
-device: "cuda"  # cuda, cpu, auto
+device: "auto"  # cuda, cpu, auto
 
 # 日志配置
 logging:
