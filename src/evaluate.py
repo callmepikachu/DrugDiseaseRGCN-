@@ -72,9 +72,15 @@ class ModelEvaluator:
             val_ratio=self.config['data']['val_ratio'],
             seed=self.config['seed']
         )
-        
+
+        # 创建全局正样本边集合，避免数据泄露
+        all_positive_edges = set()
+        for i in range(edge_index.shape[1]):
+            head, tail = edge_index[0, i].item(), edge_index[1, i].item()
+            all_positive_edges.add((head, tail))
+
         # 准备测试数据
-        self.test_data = self._prepare_data_for_evaluation(test_data)
+        self.test_data = self._prepare_data_for_evaluation(test_data, all_positive_edges)
         
         # 创建完整图用于编码
         self.full_edge_index = edge_index.to(self.device)
@@ -82,13 +88,14 @@ class ModelEvaluator:
         
         print(f"测试集大小: {len(self.test_data['existence_labels'])}")
     
-    def _prepare_data_for_evaluation(self, data):
+    def _prepare_data_for_evaluation(self, data, all_positive_edges):
         """准备多任务评估数据"""
         edge_index, existence_labels, relation_labels, _ = prepare_multitask_data(
             data['edge_index'],
             data['edge_type'],
             self.num_nodes,
-            self.config['data']['negative_sampling_ratio']
+            self.config['data']['negative_sampling_ratio'],
+            all_positive_edges
         )
 
         return {

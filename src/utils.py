@@ -131,9 +131,13 @@ def prepare_multitask_data(
     edge_index: torch.Tensor,
     edge_type: torch.Tensor,
     num_nodes: int,
-    negative_sampling_ratio: float = 1.0
+    negative_sampling_ratio: float = 1.0,
+    all_positive_edges: set = None
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """准备多任务学习数据
+
+    Args:
+        all_positive_edges: 所有分割中的正样本边集合，用于避免数据泄露
 
     Returns:
         tuple: (all_edge_index, existence_labels, relation_type_labels, perm)
@@ -145,11 +149,16 @@ def prepare_multitask_data(
     positive_existence_labels = torch.ones(num_positive)
     positive_relation_labels = edge_type.clone()
 
-    # 创建负样本
-    existing_edges = set()
-    for i in range(num_positive):
-        head, tail = edge_index[0, i].item(), edge_index[1, i].item()
-        existing_edges.add((head, tail))
+    # 创建负样本 - 排除所有正样本边以避免数据泄露
+    if all_positive_edges is None:
+        # 如果没有提供全局正样本边，只排除当前分割的边（旧行为）
+        existing_edges = set()
+        for i in range(num_positive):
+            head, tail = edge_index[0, i].item(), edge_index[1, i].item()
+            existing_edges.add((head, tail))
+    else:
+        # 使用全局正样本边集合，避免数据泄露
+        existing_edges = all_positive_edges.copy()
 
     negative_edge_index = create_negative_samples(
         edge_index, num_nodes, num_negative, existing_edges
