@@ -192,21 +192,31 @@ class ModelEvaluator:
     def _analyze_by_relation_type(self, y_true, y_pred, y_score):
         """按关系类型分析"""
         print("\n按关系类型分析:")
-        
-        # 获取关系类型
-        relation_types = self.test_data['edge_type'].cpu().numpy()
+
+        # 获取关系类型（只分析正样本）
+        positive_mask = self.test_data['existence_labels'] == 1
+        if positive_mask.sum() == 0:
+            print("  没有正样本进行关系类型分析")
+            return
+
+        relation_types = self.test_data['relation_labels'][positive_mask].cpu().numpy()
         relation_names = self.mappings['relation_encoder'].classes_
-        
+
+        # 只分析存在关系的样本
+        pos_y_true = y_true[positive_mask]
+        pos_y_pred = y_pred[positive_mask]
+        pos_y_score = y_score[positive_mask]
+
         for rel_idx, rel_name in enumerate(relation_names):
             if rel_name in self.config['data']['target_relations']:
                 mask = relation_types == rel_idx
                 if mask.sum() > 0:
-                    rel_y_true = y_true[mask]
-                    rel_y_pred = y_pred[mask]
-                    rel_y_score = y_score[mask]
-                    
+                    rel_y_true = pos_y_true[mask]
+                    rel_y_pred = pos_y_pred[mask]
+                    rel_y_score = pos_y_score[mask]
+
                     rel_metrics = calculate_metrics(rel_y_true, rel_y_pred, rel_y_score)
-                    
+
                     print(f"\n{rel_name}:")
                     print(f"  样本数: {mask.sum()}")
                     print(f"  AUC: {rel_metrics['auc']:.4f}")
