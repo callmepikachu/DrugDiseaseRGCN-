@@ -15,7 +15,7 @@ from data_loader import PrimeKGDataLoader
 from model import DrugDiseaseRGCN
 from utils import (
     load_config, get_device, load_model, calculate_metrics,
-    prepare_link_prediction_data, split_edges
+    prepare_multitask_data, split_edges
 )
 
 
@@ -80,21 +80,21 @@ class ModelEvaluator:
         self.full_edge_index = edge_index.to(self.device)
         self.full_edge_type = edge_type.to(self.device)
         
-        print(f"测试集大小: {len(self.test_data['labels'])}")
+        print(f"测试集大小: {len(self.test_data['existence_labels'])}")
     
     def _prepare_data_for_evaluation(self, data):
-        """准备评估数据"""
-        edge_index, edge_type, labels, _ = prepare_link_prediction_data(
+        """准备多任务评估数据"""
+        edge_index, existence_labels, relation_labels, _ = prepare_multitask_data(
             data['edge_index'],
             data['edge_type'],
             self.num_nodes,
             self.config['data']['negative_sampling_ratio']
         )
-        
+
         return {
             'edge_index': edge_index.to(self.device),
-            'edge_type': edge_type.to(self.device),
-            'labels': labels.to(self.device)
+            'existence_labels': existence_labels.to(self.device),
+            'relation_labels': relation_labels.to(self.device)
         }
     
     def load_model(self):
@@ -132,26 +132,40 @@ class ModelEvaluator:
                 node_indices, self.full_edge_index, self.full_edge_type
             )
             
-            # 预测
-            scores = self.model.predict_links(
+            # 多任务预测
+            existence_scores, relation_logits = self.model.predict_links(
                 node_embeddings,
                 self.test_data['edge_index'][0],
-                self.test_data['edge_index'][1],
-                self.test_data['edge_type']
+                self.test_data['edge_index'][1]
             )
-            
-            # 转换为numpy进行评估
-            y_true = self.test_data['labels'].cpu().numpy()
-            y_score = torch.sigmoid(scores).cpu().numpy()
-            y_pred = (y_score > 0.5).astype(int)
-            
-            # 计算指标
-            metrics = calculate_metrics(
-                y_true, y_pred, y_score,
+
+            # 关系存在性评估
+            existence_y_true = self.test_data['existence_labels'].cpu().numpy()
+            existence_y_score = torch.sigmoid(existence_scores).cpu().numpy()
+            existence_y_pred = (existence_y_score > 0.5).astype(int)
+
+            # 计算关系存在性指标
+            existence_metrics = calculate_metrics(
+                existence_y_true, existence_y_pred, existence_y_score,
                 self.config['evaluation']['k_values']
             )
+
+            # 关系类型评估（只对正样本）
+            positive_mask = self.test_data['existence_labels'] == 1
+            if positive_mask.sum() > 0:
+                relation_y_true = self.test_data['relation_labels'][positive_mask].cpu().numpy()
+                relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
+                relation_accuracy = (relation_y_true == relation_y_pred).mean()
+            else:
+                relation_accuracy = 0.0
+
+            # 合并指标
+            metrics = {}
+            for key, value in existence_metrics.items():
+                metrics[f'existence_{key}'] = value
+            metrics['relation_accuracy'] = relation_accuracy
         
-        return metrics, y_true, y_pred, y_score
+        return metrics, existence_y_true, existence_y_pred, existence_y_score
     
     def detailed_analysis(self, y_true, y_pred, y_score):
         """详细分析"""
@@ -244,16 +258,16 @@ class ModelEvaluator:
         
         plt.show()
     
-    def save_predictions(self, y_true, y_pred, y_score):
-        """保存预测结果"""
+    def save_predictions(self, existence_y_true, existence_y_pred, existence_y_score):
+        """保存多任务预测结果"""
         # 创建结果DataFrame
         results_df = pd.DataFrame({
             'head_node': self.test_data['edge_index'][0].cpu().numpy(),
             'tail_node': self.test_data['edge_index'][1].cpu().numpy(),
-            'relation_type': self.test_data['edge_type'].cpu().numpy(),
-            'true_label': y_true,
-            'predicted_label': y_pred,
-            'prediction_score': y_score
+            'true_existence': existence_y_true,
+            'predicted_existence': existence_y_pred,
+            'existence_score': existence_y_score,
+            'true_relation_type': self.test_data['relation_labels'].cpu().numpy()
         })
         
         # 添加节点和关系名称
@@ -262,8 +276,8 @@ class ModelEvaluator:
         
         results_df['head_node_id'] = results_df['head_node'].map(idx_to_node)
         results_df['tail_node_id'] = results_df['tail_node'].map(idx_to_node)
-        results_df['relation_name'] = results_df['relation_type'].map(
-            lambda x: relation_names[x] if x < len(relation_names) else 'unknown'
+        results_df['true_relation_name'] = results_df['true_relation_type'].map(
+            lambda x: relation_names[x] if x >= 0 and x < len(relation_names) else 'none'
         )
         
         # 保存结果
