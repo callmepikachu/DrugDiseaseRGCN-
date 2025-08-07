@@ -13,23 +13,26 @@
 
 ```
 DrugDiseaseRGCN/
-├── data/                    # 数据目录
-│   ├── raw/                # 原始数据
-│   ├── processed/          # 处理后的数据
-│   └── splits/             # 训练/验证/测试集划分
-├── src/                    # 源代码
-│   ├── data_loader.py      # 数据加载和预处理
-│   ├── model.py           # RGCN模型定义
-│   ├── train.py           # 训练脚本
-│   ├── evaluate.py        # 评估脚本
-│   └── utils.py           # 工具函数
-├── notebooks/             # Jupyter notebooks
-│   ├── data_exploration.ipynb
-│   └── model_analysis.ipynb
-├── configs/               # 配置文件
-│   └── config.yaml
-├── requirements.txt       # 依赖包
-└── README.md             # 项目说明
+├── README.md                # 项目说明文档
+├── requirements.txt         # Python依赖包列表
+├── configs/                 # 配置文件目录
+│   └── config.yaml         # 主配置文件
+├── src/                     # 源代码目录
+│   ├── data_loader.py      # PrimeKG数据加载和预处理
+│   ├── model.py            # 多任务RGCN模型定义
+│   ├── train.py            # 多任务训练脚本
+│   ├── evaluate.py         # 模型评估脚本
+│   └── utils.py            # 工具函数和辅助方法
+├── data/                    # 数据存储目录
+│   ├── raw/                # 原始PrimeKG数据 (kg.csv)
+│   ├── processed/          # 处理后的图数据 (processed_data.pkl)
+│   └── splits/             # 数据集划分 (自动生成)
+├── checkpoints/            # 模型检查点目录
+│   └── drugdisease_rgcn_best.pth  # 最佳模型权重
+└── logs/                   # 日志和结果目录
+    ├── drugdisease_rgcn.log      # 训练日志
+    ├── predictions.csv           # 预测结果
+    └── evaluation_plots.png      # 评估可视化图表
 ```
 
 ## 快速开始
