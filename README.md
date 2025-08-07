@@ -41,7 +41,16 @@ DrugDiseaseRGCN/
 conda create -n drugdisease python=3.9
 conda activate drugdisease
 
-# 安装依赖
+# 步骤1: 安装PyTorch (CUDA版本)
+pip install torch==2.7.0+cu128 torchvision==0.23.0+cu128 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cu128
+
+# 步骤2: 安装PyTorch Geometric扩展
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
+
+# 步骤3: 安装PyTorch Geometric
+pip install torch-geometric
+
+# 步骤4: 安装其他依赖
 pip install -r requirements.txt
 ```
 
