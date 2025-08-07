@@ -23,7 +23,7 @@ model:
 training:
   batch_size: 512
   learning_rate: 0.001
-  weight_decay: 1e-5
+  weight_decay: 0.00001
   num_epochs: 50
   patience: 10  # early stopping patience
   gradient_clip: 1.0
@@ -33,7 +33,7 @@ training:
     type: "ReduceLROnPlateau"  # StepLR, ExponentialLR, ReduceLROnPlateau
     factor: 0.5
     patience: 5
-    min_lr: 1e-6
+    min_lr: 0.000001
 
 # 评估配置
 evaluation:
