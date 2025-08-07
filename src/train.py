@@ -322,7 +322,7 @@ class Trainer:
                     )
                     save_model(
                         self.model, self.optimizer, epoch,
-                        val_metrics['loss'], val_metrics, save_path
+                        val_metrics['total_loss'], val_metrics, save_path
                     )
                     self.logger.info(f"保存最佳模型到: {save_path}")
             
