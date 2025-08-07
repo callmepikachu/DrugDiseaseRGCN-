@@ -1,0 +1,147 @@
+# Stage II 配置文件: 三元关系预测
+
+# 数据配置
+data:
+  data_dir: "../data"  # 使用Stage I的数据
+  test_ratio: 0.2
+  val_ratio: 0.1
+  negative_sampling_ratio: 0.3  # 三元关系更稀疏，减少负采样
+  
+  # 目标实体类型
+  target_entities:
+    - "drug"
+    - "disease" 
+    - "protein"
+    - "gene"
+    - "pathway"
+  
+  # 目标关系类型
+  target_relations:
+    # 药物相关关系
+    - "indication"
+    - "contraindication"
+    - "off-label use"
+    # 蛋白质相关关系
+    - "target"
+    - "carrier"
+    - "enzyme"
+    - "transporter"
+    # 基因-蛋白质关系
+    - "expression"
+    - "regulation"
+    # 通路关系
+    - "pathway"
+    - "biological_process"
+
+# 模型配置
+model:
+  hidden_dim: 128  # 增加维度以处理更复杂的关系
+  num_layers: 3    # 增加层数以捕获更远的关系
+  dropout: 0.15
+  
+  # 三元关系特定参数
+  triple_fusion_dim: 256
+  pathway_embedding_dim: 64
+  attention_heads: 4
+  
+  # 任务权重
+  task_weights:
+    existence_prediction: 1.0
+    protein_ranking: 0.8
+    pathway_prediction: 0.6
+    mechanism_classification: 0.4
+
+# 训练配置
+training:
+  batch_size: 256  # 减小批大小以适应更复杂的模型
+  learning_rate: 0.0005  # 降低学习率
+  weight_decay: 0.00001
+  num_epochs: 80
+  patience: 15
+  gradient_clip: 1.0
+  
+  # 学习率调度
+  scheduler:
+    type: "ReduceLROnPlateau"
+    factor: 0.5
+    patience: 8
+    min_lr: 0.00001
+  
+  # 三元关系特定训练参数
+  triple_sampling_strategy: "hard_negative"  # 困难负样本采样
+  protein_ranking_margin: 0.2
+  pathway_focal_loss_gamma: 2.0
+
+# 评估配置
+evaluation:
+  metrics:
+    # 存在性预测指标
+    - "auc"
+    - "ap"
+    - "precision_at_k"
+    - "recall_at_k"
+    
+    # 蛋白质排序指标
+    - "map"  # Mean Average Precision
+    - "ndcg"  # Normalized Discounted Cumulative Gain
+    - "mrr"   # Mean Reciprocal Rank
+    
+    # 通路预测指标
+    - "pathway_accuracy"
+    - "pathway_f1"
+    
+  k_values: [5, 10, 20, 50]
+  
+  # 可视化配置
+  visualization:
+    generate_attention_maps: true
+    generate_pathway_networks: true
+    generate_protein_rankings: true
+
+# 设备配置
+device: "auto"
+
+# 日志配置
+logging:
+  log_dir: "results/logs"
+  save_model: true
+  model_dir: "results/models"
+  log_interval: 5
+  save_predictions: true
+  prediction_dir: "results/predictions"
+
+# 随机种子
+seed: 42
+
+# 实验配置
+experiment:
+  name: "triple_relation_rgcn"
+  description: "Drug-Disease-Protein triple relation prediction using enhanced RGCN"
+  stage: "II"
+  tags:
+    - "triple-relation"
+    - "protein-pathway"
+    - "mechanism-prediction"
+    - "multi-task"
+
+# 分析配置
+analysis:
+  # 通路分析
+  pathway_analysis:
+    min_protein_count: 3
+    max_pathway_size: 100
+    significance_threshold: 0.05
+  
+  # 蛋白质分析
+  protein_analysis:
+    interaction_threshold: 0.7
+    centrality_measures: ["betweenness", "closeness", "degree"]
+  
+  # 机制分析
+  mechanism_analysis:
+    mechanism_types:
+      - "agonist"
+      - "antagonist" 
+      - "inhibitor"
+      - "activator"
+      - "modulator"
