@@ -239,7 +239,7 @@ def save_model(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 def load_model(model: torch.nn.Module, optimizer: torch.optim.Optimizer, 
                load_path: str, device: torch.device) -> Tuple[int, float, Dict[str, float]]:
     """加载模型"""
-    checkpoint = torch.load(load_path, map_location=device)
+    checkpoint = torch.load(load_path, map_location=device, weights_only=False)
     
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
