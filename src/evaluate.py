@@ -199,13 +199,15 @@ class ModelEvaluator:
             print("  没有正样本进行关系类型分析")
             return
 
+        # 转换为CPU numpy数组
+        positive_mask_np = positive_mask.cpu().numpy()
         relation_types = self.test_data['relation_labels'][positive_mask].cpu().numpy()
         relation_names = self.mappings['relation_encoder'].classes_
 
         # 只分析存在关系的样本
-        pos_y_true = y_true[positive_mask]
-        pos_y_pred = y_pred[positive_mask]
-        pos_y_score = y_score[positive_mask]
+        pos_y_true = y_true[positive_mask_np]
+        pos_y_pred = y_pred[positive_mask_np]
+        pos_y_score = y_score[positive_mask_np]
 
         for rel_idx, rel_name in enumerate(relation_names):
             if rel_name in self.config['data']['target_relations']:
