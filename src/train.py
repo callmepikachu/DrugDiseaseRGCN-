@@ -16,7 +16,7 @@ from data_loader import PrimeKGDataLoader
 from model import DrugDiseaseRGCN
 from utils import (
     set_seed, load_config, setup_logging, get_device,
-    split_edges, prepare_link_prediction_data, calculate_metrics,
+    split_edges, prepare_multitask_data, calculate_metrics,
     save_model, print_model_info, EarlyStopping
 )
 
@@ -46,7 +46,9 @@ class Trainer:
         self.model = None
         self.optimizer = None
         self.scheduler = None
-        self.criterion = nn.BCEWithLogitsLoss()
+        # 多任务损失函数
+        self.existence_criterion = nn.BCEWithLogitsLoss()  # 关系存在性
+        self.relation_criterion = nn.CrossEntropyLoss(ignore_index=-1)  # 关系类型，忽略负样本
         
         # 早停
         self.early_stopping = EarlyStopping(
@@ -107,23 +109,23 @@ class Trainer:
         self.full_edge_index = edge_index.to(self.device)
         self.full_edge_type = edge_type.to(self.device)
         
-        self.logger.info(f"训练集大小: {len(self.train_data['labels'])}")
-        self.logger.info(f"验证集大小: {len(self.val_data['labels'])}")
-        self.logger.info(f"测试集大小: {len(self.test_data['labels'])}")
+        self.logger.info(f"训练集大小: {len(self.train_data['existence_labels'])}")
+        self.logger.info(f"验证集大小: {len(self.val_data['existence_labels'])}")
+        self.logger.info(f"测试集大小: {len(self.test_data['existence_labels'])}")
     
     def _prepare_data_for_training(self, data):
-        """准备训练数据"""
-        edge_index, edge_type, labels, _ = prepare_link_prediction_data(
+        """准备多任务训练数据"""
+        edge_index, existence_labels, relation_labels, _ = prepare_multitask_data(
             data['edge_index'],
             data['edge_type'],
             self.num_nodes,
             self.config['data']['negative_sampling_ratio']
         )
-        
+
         return {
             'edge_index': edge_index.to(self.device),
-            'edge_type': edge_type.to(self.device),
-            'labels': labels.to(self.device)
+            'existence_labels': existence_labels.to(self.device),
+            'relation_labels': relation_labels.to(self.device)
         }
     
     def build_model(self):
@@ -171,10 +173,10 @@ class Trainer:
         
         # 创建数据加载器
         dataset = TensorDataset(
-            self.train_data['edge_index'][0],  # head
-            self.train_data['edge_index'][1],  # tail
-            self.train_data['edge_type'],      # relation
-            self.train_data['labels']          # labels
+            self.train_data['edge_index'][0],      # head
+            self.train_data['edge_index'][1],      # tail
+            self.train_data['existence_labels'],   # existence labels
+            self.train_data['relation_labels']     # relation type labels
         )
         
         dataloader = DataLoader(
@@ -190,19 +192,23 @@ class Trainer:
                 node_indices, self.full_edge_index, self.full_edge_type
             )
         
-        for batch_idx, (head_indices, tail_indices, relation_indices, labels) in enumerate(dataloader):
+        for batch_idx, (head_indices, tail_indices, existence_labels, relation_labels) in enumerate(dataloader):
             self.optimizer.zero_grad()
-            
+
             # 前向传播
-            scores = self.model.predict_links(
-                node_embeddings, head_indices, tail_indices, relation_indices
+            existence_scores, relation_logits = self.model.predict_links(
+                node_embeddings, head_indices, tail_indices
             )
-            
-            # 计算损失
-            loss = self.criterion(scores, labels.float())
-            
+
+            # 计算多任务损失
+            existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
+            relation_loss = self.relation_criterion(relation_logits, relation_labels)
+
+            # 总损失（可以添加权重）
+            total_batch_loss = existence_loss + relation_loss
+
             # 反向传播
-            loss.backward()
+            total_batch_loss.backward()
             
             # 梯度裁剪
             if self.config['training']['gradient_clip'] > 0:
@@ -212,14 +218,15 @@ class Trainer:
                 )
             
             self.optimizer.step()
-            
-            total_loss += loss.item()
+
+            total_loss += total_batch_loss.item()
             num_batches += 1
-            
+
             # 记录日志
             if batch_idx % self.config['logging']['log_interval'] == 0:
                 self.logger.info(
-                    f'Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item():.4f}'
+                    f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}, '
+                    f'Existence Loss: {existence_loss.item():.4f}, Relation Loss: {relation_loss.item():.4f}'
                 )
         
         return total_loss / num_batches
@@ -236,27 +243,45 @@ class Trainer:
             )
             
             # 预测
-            scores = self.model.predict_links(
+            existence_scores, relation_logits = self.model.predict_links(
                 node_embeddings,
                 data['edge_index'][0],
-                data['edge_index'][1],
-                data['edge_type']
+                data['edge_index'][1]
             )
-            
+
             # 计算损失
-            loss = self.criterion(scores, data['labels'].float())
-            
-            # 转换为numpy进行评估
-            y_true = data['labels'].cpu().numpy()
-            y_score = torch.sigmoid(scores).cpu().numpy()
-            y_pred = (y_score > 0.5).astype(int)
-            
-            # 计算指标
-            metrics = calculate_metrics(
-                y_true, y_pred, y_score,
+            existence_loss = self.existence_criterion(existence_scores, data['existence_labels'].float())
+            relation_loss = self.relation_criterion(relation_logits, data['relation_labels'])
+            total_loss = existence_loss + relation_loss
+
+            # 关系存在性评估
+            existence_y_true = data['existence_labels'].cpu().numpy()
+            existence_y_score = torch.sigmoid(existence_scores).cpu().numpy()
+            existence_y_pred = (existence_y_score > 0.5).astype(int)
+
+            # 计算关系存在性指标
+            existence_metrics = calculate_metrics(
+                existence_y_true, existence_y_pred, existence_y_score,
                 self.config['evaluation']['k_values']
             )
-            metrics['loss'] = loss.item()
+
+            # 关系类型评估（只对正样本）
+            positive_mask = data['existence_labels'] == 1
+            if positive_mask.sum() > 0:
+                relation_y_true = data['relation_labels'][positive_mask].cpu().numpy()
+                relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
+                relation_accuracy = (relation_y_true == relation_y_pred).mean()
+            else:
+                relation_accuracy = 0.0
+
+            # 合并指标
+            metrics = {}
+            for key, value in existence_metrics.items():
+                metrics[f'existence_{key}'] = value
+            metrics['relation_accuracy'] = relation_accuracy
+            metrics['total_loss'] = total_loss.item()
+            metrics['existence_loss'] = existence_loss.item()
+            metrics['relation_loss'] = relation_loss.item()
         
         return metrics
     
@@ -276,17 +301,19 @@ class Trainer:
             val_metrics = self.evaluate(self.val_data, "val")
             
             self.logger.info(f"Train Loss: {train_loss:.4f}")
-            self.logger.info(f"Val Loss: {val_metrics['loss']:.4f}, Val AUC: {val_metrics['auc']:.4f}")
-            
+            self.logger.info(f"Val Total Loss: {val_metrics['total_loss']:.4f}, "
+                           f"Existence AUC: {val_metrics['existence_auc']:.4f}, "
+                           f"Relation Acc: {val_metrics['relation_accuracy']:.4f}")
+
             # 学习率调度
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                self.scheduler.step(val_metrics['auc'])
+                self.scheduler.step(val_metrics['existence_auc'])
             else:
                 self.scheduler.step()
-            
-            # 保存最佳模型
-            if val_metrics['auc'] > best_val_auc:
-                best_val_auc = val_metrics['auc']
+
+            # 保存最佳模型（基于关系存在性AUC）
+            if val_metrics['existence_auc'] > best_val_auc:
+                best_val_auc = val_metrics['existence_auc']
                 
                 if self.config['logging']['save_model']:
                     save_path = os.path.join(
@@ -300,7 +327,7 @@ class Trainer:
                     self.logger.info(f"保存最佳模型到: {save_path}")
             
             # 早停检查
-            if self.early_stopping(val_metrics['auc'], self.model):
+            if self.early_stopping(val_metrics['existence_auc'], self.model):
                 self.logger.info(f"早停在epoch {epoch+1}")
                 break
         

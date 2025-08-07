@@ -127,49 +127,50 @@ def split_edges(
     return train_data, val_data, test_data
 
 
-def prepare_link_prediction_data(
+def prepare_multitask_data(
     edge_index: torch.Tensor,
     edge_type: torch.Tensor,
     num_nodes: int,
     negative_sampling_ratio: float = 1.0
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """准备链接预测数据"""
+    """准备多任务学习数据
+
+    Returns:
+        tuple: (all_edge_index, existence_labels, relation_type_labels, perm)
+    """
     num_positive = edge_index.shape[1]
     num_negative = int(num_positive * negative_sampling_ratio)
-    
-    # 创建正样本标签
-    positive_labels = torch.ones(num_positive)
-    
+
+    # 正样本：存在关系=1，关系类型=实际类型
+    positive_existence_labels = torch.ones(num_positive)
+    positive_relation_labels = edge_type.clone()
+
     # 创建负样本
     existing_edges = set()
     for i in range(num_positive):
         head, tail = edge_index[0, i].item(), edge_index[1, i].item()
         existing_edges.add((head, tail))
-    
+
     negative_edge_index = create_negative_samples(
         edge_index, num_nodes, num_negative, existing_edges
     )
-    
-    # 为负样本随机分配关系类型
-    negative_edge_type = torch.randint(
-        0, edge_type.max().item() + 1, (num_negative,)
-    )
-    
-    # 创建负样本标签
-    negative_labels = torch.zeros(num_negative)
-    
+
+    # 负样本：存在关系=0，关系类型=-1（忽略）
+    negative_existence_labels = torch.zeros(num_negative)
+    negative_relation_labels = torch.full((num_negative,), -1, dtype=torch.long)  # -1表示忽略
+
     # 合并正负样本
     all_edge_index = torch.cat([edge_index, negative_edge_index], dim=1)
-    all_edge_type = torch.cat([edge_type, negative_edge_type], dim=0)
-    all_labels = torch.cat([positive_labels, negative_labels], dim=0)
-    
+    all_existence_labels = torch.cat([positive_existence_labels, negative_existence_labels], dim=0)
+    all_relation_labels = torch.cat([positive_relation_labels, negative_relation_labels], dim=0)
+
     # 打乱顺序
     perm = torch.randperm(all_edge_index.shape[1])
     all_edge_index = all_edge_index[:, perm]
-    all_edge_type = all_edge_type[perm]
-    all_labels = all_labels[perm]
-    
-    return all_edge_index, all_edge_type, all_labels, perm
+    all_existence_labels = all_existence_labels[perm]
+    all_relation_labels = all_relation_labels[perm]
+
+    return all_edge_index, all_existence_labels, all_relation_labels, perm
 
 
 def calculate_metrics(

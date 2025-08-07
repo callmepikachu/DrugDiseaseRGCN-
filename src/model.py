@@ -85,67 +85,76 @@ class RGCNEncoder(nn.Module):
         return x
 
 
-class LinkPredictor(nn.Module):
-    """链接预测器"""
-    
+class MultiTaskLinkPredictor(nn.Module):
+    """多任务链接预测器：同时预测关系存在性和关系类型"""
+
     def __init__(
         self,
         hidden_dim: int,
         num_relations: int,
         dropout: float = 0.1
     ):
-        super(LinkPredictor, self).__init__()
-        
+        super(MultiTaskLinkPredictor, self).__init__()
+
         self.hidden_dim = hidden_dim
         self.num_relations = num_relations
-        
-        # 关系嵌入
-        self.relation_embedding = nn.Embedding(num_relations, hidden_dim)
-        
-        # MLP预测器
-        self.predictor = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim * 2),
+
+        # 共享的特征提取层
+        self.shared_layers = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim * 2),  # 只用头尾节点，不用关系嵌入
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1)
+            nn.Dropout(dropout)
         )
-        
+
+        # 关系存在性预测头（二分类）
+        self.existence_head = nn.Linear(hidden_dim, 1)
+
+        # 关系类型预测头（多分类）
+        self.relation_type_head = nn.Linear(hidden_dim, num_relations)
+
         self._init_parameters()
     
     def _init_parameters(self):
         """初始化参数"""
-        nn.init.xavier_uniform_(self.relation_embedding.weight)
-        
-        for layer in self.predictor:
+        for layer in self.shared_layers:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_uniform_(layer.weight)
                 nn.init.zeros_(layer.bias)
-    
+
+        nn.init.xavier_uniform_(self.existence_head.weight)
+        nn.init.zeros_(self.existence_head.bias)
+        nn.init.xavier_uniform_(self.relation_type_head.weight)
+        nn.init.zeros_(self.relation_type_head.bias)
+
     def forward(
         self,
         node_embeddings: torch.Tensor,
         head_indices: torch.Tensor,
-        tail_indices: torch.Tensor,
-        relation_indices: torch.Tensor
-    ) -> torch.Tensor:
-        """前向传播"""
+        tail_indices: torch.Tensor
+    ) -> tuple:
+        """前向传播
+
+        Returns:
+            tuple: (existence_scores, relation_type_logits)
+        """
         # 获取头尾节点嵌入
         head_emb = node_embeddings[head_indices]  # [batch_size, hidden_dim]
         tail_emb = node_embeddings[tail_indices]  # [batch_size, hidden_dim]
-        
-        # 获取关系嵌入
-        rel_emb = self.relation_embedding(relation_indices)  # [batch_size, hidden_dim]
-        
-        # 拼接特征
-        combined = torch.cat([head_emb, rel_emb, tail_emb], dim=-1)  # [batch_size, hidden_dim * 3]
-        
-        # 预测
-        scores = self.predictor(combined)  # [batch_size, 1]
-        
-        return scores.squeeze(-1)
+
+        # 拼接特征（不包含关系类型）
+        combined = torch.cat([head_emb, tail_emb], dim=-1)  # [batch_size, hidden_dim * 2]
+
+        # 共享特征提取
+        shared_features = self.shared_layers(combined)  # [batch_size, hidden_dim]
+
+        # 两个任务的预测
+        existence_scores = self.existence_head(shared_features).squeeze(-1)  # [batch_size]
+        relation_type_logits = self.relation_type_head(shared_features)  # [batch_size, num_relations]
+
+        return existence_scores, relation_type_logits
 
 
 class DrugDiseaseRGCN(nn.Module):
@@ -178,8 +187,8 @@ class DrugDiseaseRGCN(nn.Module):
             num_blocks=num_blocks
         )
         
-        # 链接预测器
-        self.link_predictor = LinkPredictor(
+        # 多任务链接预测器
+        self.link_predictor = MultiTaskLinkPredictor(
             hidden_dim=hidden_dim,
             num_relations=num_relations,
             dropout=dropout
@@ -191,22 +200,24 @@ class DrugDiseaseRGCN(nn.Module):
         edge_index: torch.Tensor,
         edge_type: torch.Tensor,
         head_indices: torch.Tensor,
-        tail_indices: torch.Tensor,
-        relation_indices: torch.Tensor
-    ) -> torch.Tensor:
-        """前向传播"""
+        tail_indices: torch.Tensor
+    ) -> tuple:
+        """前向传播
+
+        Returns:
+            tuple: (existence_scores, relation_type_logits)
+        """
         # 编码节点
         node_embeddings = self.encoder(x, edge_index, edge_type)
-        
-        # 预测链接
-        scores = self.link_predictor(
+
+        # 多任务预测
+        existence_scores, relation_type_logits = self.link_predictor(
             node_embeddings,
             head_indices,
-            tail_indices,
-            relation_indices
+            tail_indices
         )
-        
-        return scores
+
+        return existence_scores, relation_type_logits
     
     def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
         """编码节点"""
@@ -216,15 +227,17 @@ class DrugDiseaseRGCN(nn.Module):
         self,
         node_embeddings: torch.Tensor,
         head_indices: torch.Tensor,
-        tail_indices: torch.Tensor,
-        relation_indices: torch.Tensor
-    ) -> torch.Tensor:
-        """预测链接"""
+        tail_indices: torch.Tensor
+    ) -> tuple:
+        """预测链接
+
+        Returns:
+            tuple: (existence_scores, relation_type_logits)
+        """
         return self.link_predictor(
             node_embeddings,
             head_indices,
-            tail_indices,
-            relation_indices
+            tail_indices
         )
 
 
