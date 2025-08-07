@@ -198,12 +198,12 @@ class ModelEvaluator:
     
     def _analyze_by_relation_type(self, y_true, y_pred, y_score):
         """按关系类型分析"""
-        print("\n按关系类型分析:")
+        print("\nAnalysis by relation type:")
 
         # 获取关系类型（只分析正样本）
         positive_mask = self.test_data['existence_labels'] == 1
         if positive_mask.sum() == 0:
-            print("  没有正样本进行关系类型分析")
+            print("  No positive samples for relation type analysis")
             return
 
         # 转换为CPU numpy数组
@@ -227,7 +227,7 @@ class ModelEvaluator:
                     rel_metrics = calculate_metrics(rel_y_true, rel_y_pred, rel_y_score)
 
                     print(f"\n{rel_name}:")
-                    print(f"  样本数: {mask.sum()}")
+                    print(f"  Samples: {mask.sum()}")
                     print(f"  AUC: {rel_metrics['auc']:.4f}")
                     print(f"  AP: {rel_metrics['ap']:.4f}")
     
@@ -235,37 +235,37 @@ class ModelEvaluator:
         """创建可视化"""
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         
-        # 混淆矩阵热图
+        # Confusion Matrix Heatmap
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0,0])
-        axes[0,0].set_title('混淆矩阵')
-        axes[0,0].set_xlabel('预测标签')
-        axes[0,0].set_ylabel('真实标签')
-        
-        # 预测分数分布
-        axes[0,1].hist(y_score[y_true==0], bins=50, alpha=0.7, label='负样本', density=True)
-        axes[0,1].hist(y_score[y_true==1], bins=50, alpha=0.7, label='正样本', density=True)
-        axes[0,1].set_title('预测分数分布')
-        axes[0,1].set_xlabel('预测分数')
-        axes[0,1].set_ylabel('密度')
+        axes[0,0].set_title('Confusion Matrix')
+        axes[0,0].set_xlabel('Predicted Label')
+        axes[0,0].set_ylabel('True Label')
+
+        # Prediction Score Distribution
+        axes[0,1].hist(y_score[y_true==0], bins=50, alpha=0.7, label='Negative', density=True)
+        axes[0,1].hist(y_score[y_true==1], bins=50, alpha=0.7, label='Positive', density=True)
+        axes[0,1].set_title('Prediction Score Distribution')
+        axes[0,1].set_xlabel('Prediction Score')
+        axes[0,1].set_ylabel('Density')
         axes[0,1].legend()
-        
-        # ROC曲线
+
+        # ROC Curve
         from sklearn.metrics import roc_curve
         fpr, tpr, _ = roc_curve(y_true, y_score)
         axes[1,0].plot(fpr, tpr, label=f'ROC (AUC = {calculate_metrics(y_true, y_pred, y_score)["auc"]:.3f})')
-        axes[1,0].plot([0, 1], [0, 1], 'k--', label='随机')
-        axes[1,0].set_title('ROC曲线')
-        axes[1,0].set_xlabel('假正例率')
-        axes[1,0].set_ylabel('真正例率')
+        axes[1,0].plot([0, 1], [0, 1], 'k--', label='Random')
+        axes[1,0].set_title('ROC Curve')
+        axes[1,0].set_xlabel('False Positive Rate')
+        axes[1,0].set_ylabel('True Positive Rate')
         axes[1,0].legend()
-        
-        # Precision-Recall曲线
+
+        # Precision-Recall Curve
         from sklearn.metrics import precision_recall_curve
         precision, recall, _ = precision_recall_curve(y_true, y_score)
         axes[1,1].plot(recall, precision, label=f'PR (AP = {calculate_metrics(y_true, y_pred, y_score)["ap"]:.3f})')
-        axes[1,1].set_title('Precision-Recall曲线')
-        axes[1,1].set_xlabel('召回率')
-        axes[1,1].set_ylabel('精确率')
+        axes[1,1].set_title('Precision-Recall Curve')
+        axes[1,1].set_xlabel('Recall')
+        axes[1,1].set_ylabel('Precision')
         axes[1,1].legend()
         
         plt.tight_layout()
@@ -273,7 +273,7 @@ class ModelEvaluator:
         # 保存图片
         save_path = os.path.join(self.config['logging']['log_dir'], 'evaluation_plots.png')
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"\n可视化结果已保存到: {save_path}")
+        print(f"\nVisualization saved to: {save_path}")
         
         plt.show()
     
