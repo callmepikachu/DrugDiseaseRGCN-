@@ -123,6 +123,16 @@ class TripleRelationTrainer:
         if len(edges) > 0:
             self.edge_index = torch.tensor(edges, dtype=torch.long, device=self.device).t()
             self.edge_type = torch.tensor(edge_types, dtype=torch.long, device=self.device)
+
+            # 检查边索引是否超出节点范围
+            max_edge_idx = self.edge_index.max().item()
+            if max_edge_idx >= self.num_nodes:
+                self.logger.error(f"Edge index {max_edge_idx} exceeds node count {self.num_nodes}")
+                # 过滤掉超出范围的边
+                valid_mask = (self.edge_index < self.num_nodes).all(dim=0)
+                self.edge_index = self.edge_index[:, valid_mask]
+                self.edge_type = self.edge_type[valid_mask]
+                self.logger.info(f"Filtered edges, remaining: {self.edge_index.shape[1]}")
         else:
             # 如果没有边，创建最小的图结构
             self.edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=self.device).t()
@@ -259,9 +269,12 @@ class TripleRelationTrainer:
         """构建模型"""
         self.logger.info("Building model...")
         
+        # 确保模型的节点数量与实际数据匹配
+        self.logger.info(f"Building model with {self.num_nodes} nodes and {self.num_relations} relations")
+
         self.model = TripleRelationRGCN(
             num_nodes=self.num_nodes,
-            num_relations=self.num_relations,
+            num_relations=max(self.num_relations, 2),  # 至少2个关系类型
             num_pathways=self.config['model'].get('num_pathways', 100),
             hidden_dim=self.config['model']['hidden_dim'],
             num_layers=self.config['model']['num_layers'],
@@ -328,6 +341,12 @@ class TripleRelationTrainer:
         
         # 编码所有节点（一次性）
         node_indices = torch.arange(self.num_nodes, device=self.device)
+        # 确保节点索引不超出模型的节点数量
+        max_node_idx = node_indices.max().item()
+        if max_node_idx >= self.model.num_nodes:
+            self.logger.error(f"Node index {max_node_idx} exceeds model node count {self.model.num_nodes}")
+            raise ValueError(f"Node index out of range: {max_node_idx} >= {self.model.num_nodes}")
+
         with torch.no_grad():
             node_embeddings = self.model.encode(node_indices, self.edge_index, self.edge_type)
         
