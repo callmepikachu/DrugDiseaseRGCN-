@@ -160,22 +160,34 @@ class TripleRelationEvaluator:
     def load_model(self):
         """加载模型"""
         print("Loading model...")
-        
-        # 创建模型
+
+        # 加载检查点以获取训练时的配置
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+
+        # 从检查点获取训练时的配置
+        if 'config' in checkpoint:
+            train_config = checkpoint['config']
+            print(f"Using training config from checkpoint")
+        else:
+            train_config = self.config
+            print(f"Using current config (no training config in checkpoint)")
+
+        # 创建模型 - 使用与训练时相同的节点数量
         self.model = TripleRelationRGCN(
             num_nodes=self.num_nodes,
-            num_relations=self.num_relations,
-            num_pathways=self.config['model'].get('num_pathways', 100),
-            hidden_dim=self.config['model']['hidden_dim'],
-            num_layers=self.config['model']['num_layers'],
-            fusion_dim=self.config['model']['triple_fusion_dim'],
-            dropout=self.config['model']['dropout']
+            num_relations=max(self.num_relations, 2),
+            num_pathways=train_config['model'].get('num_pathways', 100),
+            hidden_dim=train_config['model']['hidden_dim'],
+            num_layers=train_config['model']['num_layers'],
+            fusion_dim=train_config['model']['triple_fusion_dim'],
+            dropout=train_config['model']['dropout']
         ).to(self.device)
-        
-        # 加载检查点
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+
+        print(f"Created model with {self.num_nodes} nodes, {self.num_relations} relations")
+
+        # 加载模型权重
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        
+
         print(f"Model loaded from epoch {checkpoint['epoch']}")
         if 'val_metrics' in checkpoint:
             print("Training validation metrics:")
@@ -191,6 +203,27 @@ class TripleRelationEvaluator:
         with torch.no_grad():
             # 编码所有节点
             node_indices = torch.arange(self.num_nodes, device=self.device)
+
+            # 检查模型的节点数量是否匹配
+            model_num_nodes = self.model.num_nodes
+            if self.num_nodes != model_num_nodes:
+                print(f"Warning: Data nodes ({self.num_nodes}) != Model nodes ({model_num_nodes})")
+                # 使用较小的数量
+                actual_num_nodes = min(self.num_nodes, model_num_nodes)
+                node_indices = torch.arange(actual_num_nodes, device=self.device)
+                print(f"Using {actual_num_nodes} nodes for evaluation")
+
+            # 检查边索引是否超出范围
+            if self.edge_index.numel() > 0:
+                max_edge_idx = self.edge_index.max().item()
+                if max_edge_idx >= len(node_indices):
+                    print(f"Warning: Edge index {max_edge_idx} >= node count {len(node_indices)}")
+                    # 过滤边
+                    valid_mask = (self.edge_index < len(node_indices)).all(dim=0)
+                    self.edge_index = self.edge_index[:, valid_mask]
+                    self.edge_type = self.edge_type[valid_mask]
+                    print(f"Filtered edges, remaining: {self.edge_index.shape[1]}")
+
             node_embeddings = self.model.encode(node_indices, self.edge_index, self.edge_type)
             
             # 预测
