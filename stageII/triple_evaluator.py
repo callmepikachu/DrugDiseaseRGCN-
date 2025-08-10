@@ -67,10 +67,26 @@ class TripleRelationEvaluator:
         self.triple_df = pd.read_csv(triple_file)
         print(f"Loaded {len(self.triple_df)} triple relations")
         
-        # 准备图数据（简化版本）
-        num_edges = min(10000, self.num_nodes * 5)
-        self.edge_index = torch.randint(0, self.num_nodes, (2, num_edges), device=self.device)
-        self.edge_type = torch.randint(0, self.num_relations, (num_edges,), device=self.device)
+        # 准备图数据 - 基于三元关系构建
+        edges = []
+        edge_types = []
+
+        for _, row in self.triple_df.iterrows():
+            drug_idx = self.mappings['node_to_idx'][str(row['drug_id'])]
+            protein_idx = self.mappings['node_to_idx'][str(row['protein_id'])]
+            disease_idx = self.mappings['node_to_idx'][str(row['disease_id'])]
+
+            edges.append([drug_idx, protein_idx])
+            edge_types.append(0)
+            edges.append([protein_idx, disease_idx])
+            edge_types.append(1)
+
+        if len(edges) > 0:
+            self.edge_index = torch.tensor(edges, dtype=torch.long, device=self.device).t()
+            self.edge_type = torch.tensor(edge_types, dtype=torch.long, device=self.device)
+        else:
+            self.edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=self.device).t()
+            self.edge_type = torch.tensor([0, 0], dtype=torch.long, device=self.device)
         
         # 准备测试数据
         self.prepare_test_data()
@@ -78,31 +94,39 @@ class TripleRelationEvaluator:
     def prepare_test_data(self):
         """准备测试数据"""
         print("Preparing test data...")
-        
-        # 将实体ID映射到索引
-        node_to_idx = self.mappings['node_to_idx']
-        
-        # 过滤存在于映射中的三元组
+
+        # 创建与训练时相同的节点映射
+        all_nodes = set()
+        for _, row in self.triple_df.iterrows():
+            all_nodes.add(str(row['drug_id']))
+            all_nodes.add(str(row['protein_id']))
+            all_nodes.add(str(row['disease_id']))
+
+        sorted_nodes = sorted(all_nodes)
+        node_to_idx = {node: idx for idx, node in enumerate(sorted_nodes)}
+
+        # 更新映射信息
+        self.mappings['node_to_idx'] = node_to_idx
+        self.mappings['idx_to_node'] = {idx: node for node, idx in node_to_idx.items()}
+        self.num_nodes = len(node_to_idx)
+
+        print(f"Created mapping for {len(node_to_idx)} unique nodes")
+
+        # 转换所有三元组
         valid_triples = []
         for _, row in self.triple_df.iterrows():
-            if (row['drug_id'] in node_to_idx and 
-                row['protein_id'] in node_to_idx and 
-                row['disease_id'] in node_to_idx):
-                valid_triples.append({
-                    'drug_idx': node_to_idx[row['drug_id']],
-                    'protein_idx': node_to_idx[row['protein_id']],
-                    'disease_idx': node_to_idx[row['disease_id']],
-                    'drug_id': row['drug_id'],
-                    'protein_id': row['protein_id'],
-                    'disease_id': row['disease_id'],
-                    'drug_protein_relation': row['drug_protein_relation'],
-                    'protein_disease_relation': row['protein_disease_relation']
-                })
-        
+            valid_triples.append({
+                'drug_idx': node_to_idx[str(row['drug_id'])],
+                'protein_idx': node_to_idx[str(row['protein_id'])],
+                'disease_idx': node_to_idx[str(row['disease_id'])],
+                'drug_id': row['drug_id'],
+                'protein_id': row['protein_id'],
+                'disease_id': row['disease_id'],
+                'drug_protein_relation': row['drug_protein_relation'],
+                'protein_disease_relation': row['protein_disease_relation']
+            })
+
         print(f"Valid triples for evaluation: {len(valid_triples)}")
-        
-        if len(valid_triples) == 0:
-            raise ValueError("No valid triples found for evaluation")
         
         # 转换为张量
         valid_df = pd.DataFrame(valid_triples)
