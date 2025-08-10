@@ -107,9 +107,9 @@ class TripleRelationTrainer:
 
         # 从三元关系中提取边
         for _, row in self.triple_df.iterrows():
-            drug_idx = self.mappings['node_to_idx'][row['drug_id']]
-            protein_idx = self.mappings['node_to_idx'][row['protein_id']]
-            disease_idx = self.mappings['node_to_idx'][row['disease_id']]
+            drug_idx = self.mappings['node_to_idx'][str(row['drug_id'])]
+            protein_idx = self.mappings['node_to_idx'][str(row['protein_id'])]
+            disease_idx = self.mappings['node_to_idx'][str(row['disease_id'])]
 
             # 添加药物-蛋白质边
             edges.append([drug_idx, protein_idx])
@@ -142,8 +142,9 @@ class TripleRelationTrainer:
             all_nodes.add(row['protein_id'])
             all_nodes.add(row['disease_id'])
 
-        # 创建节点到索引的映射
-        node_to_idx = {node: idx for idx, node in enumerate(sorted(all_nodes))}
+        # 创建节点到索引的映射（将所有节点ID转换为字符串以避免排序问题）
+        all_nodes_str = [str(node) for node in all_nodes]
+        node_to_idx = {node: idx for idx, node in enumerate(sorted(all_nodes_str))}
         idx_to_node = {idx: node for node, idx in node_to_idx.items()}
 
         self.logger.info(f"Created mapping for {len(node_to_idx)} unique nodes")
@@ -153,13 +154,13 @@ class TripleRelationTrainer:
         self.mappings['idx_to_node'] = idx_to_node
         self.num_nodes = len(node_to_idx)
 
-        # 转换三元组
+        # 转换三元组（确保使用字符串形式的节点ID）
         valid_triples = []
         for _, row in self.triple_df.iterrows():
             valid_triples.append({
-                'drug_idx': node_to_idx[row['drug_id']],
-                'protein_idx': node_to_idx[row['protein_id']],
-                'disease_idx': node_to_idx[row['disease_id']],
+                'drug_idx': node_to_idx[str(row['drug_id'])],
+                'protein_idx': node_to_idx[str(row['protein_id'])],
+                'disease_idx': node_to_idx[str(row['disease_id'])],
                 'drug_protein_relation': row['drug_protein_relation'],
                 'protein_disease_relation': row['protein_disease_relation']
             })
