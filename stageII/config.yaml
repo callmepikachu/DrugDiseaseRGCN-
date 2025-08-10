@@ -99,7 +99,7 @@ evaluation:
     generate_protein_rankings: true
 
 # 设备配置
-device: "auto"
+device: "cpu"  # 暂时使用CPU避免CUDA错误
 
 # 日志配置
 logging:

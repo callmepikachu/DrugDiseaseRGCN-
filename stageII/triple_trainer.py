@@ -360,6 +360,15 @@ class TripleRelationTrainer:
             
             self.optimizer.zero_grad()
             
+            # 检查索引是否在有效范围内
+            max_drug_idx = drug_idx.max().item()
+            max_protein_idx = protein_idx.max().item()
+            max_disease_idx = disease_idx.max().item()
+
+            if max_drug_idx >= node_embeddings.size(0) or max_protein_idx >= node_embeddings.size(0) or max_disease_idx >= node_embeddings.size(0):
+                self.logger.error(f"Index out of range: drug={max_drug_idx}, protein={max_protein_idx}, disease={max_disease_idx}, embeddings_size={node_embeddings.size(0)}")
+                continue  # 跳过这个批次
+
             # 前向传播
             predictions = self.model.predict_triple_relations(
                 node_embeddings, drug_idx, protein_idx, disease_idx
@@ -433,6 +442,15 @@ class TripleRelationTrainer:
             node_indices = torch.arange(self.num_nodes, device=self.device)
             node_embeddings = self.model.encode(node_indices, self.edge_index, self.edge_type)
             
+            # 检查索引范围
+            max_drug_idx = data['drug_indices'].max().item()
+            max_protein_idx = data['protein_indices'].max().item()
+            max_disease_idx = data['disease_indices'].max().item()
+
+            if max_drug_idx >= node_embeddings.size(0) or max_protein_idx >= node_embeddings.size(0) or max_disease_idx >= node_embeddings.size(0):
+                self.logger.error(f"Evaluation index out of range: drug={max_drug_idx}, protein={max_protein_idx}, disease={max_disease_idx}, embeddings_size={node_embeddings.size(0)}")
+                return {'total_loss': float('inf'), 'existence_accuracy': 0.0, 'pathway_accuracy': 0.0}
+
             # 预测
             predictions = self.model.predict_triple_relations(
                 node_embeddings,
