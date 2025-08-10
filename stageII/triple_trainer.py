@@ -191,13 +191,18 @@ class TripleRelationTrainer:
         pathway_labels = torch.randint(0, 10, (num_samples,), dtype=torch.long)  # 模拟通路标签
         mechanism_labels = torch.randint(0, 5, (num_samples,), dtype=torch.long)  # 模拟机制标签
         
-        # 创建负样本
+        # 创建负样本 - 确保索引在有效范围内
         neg_ratio = self.config['data']['negative_sampling_ratio']
         num_neg = int(num_samples * neg_ratio)
-        
-        neg_drug_indices = torch.randint(0, self.num_nodes, (num_neg,), dtype=torch.long)
-        neg_protein_indices = torch.randint(0, self.num_nodes, (num_neg,), dtype=torch.long)
-        neg_disease_indices = torch.randint(0, self.num_nodes, (num_neg,), dtype=torch.long)
+
+        # 从实际存在的节点中随机采样
+        all_drug_indices = list(set(valid_df['drug_idx'].values))
+        all_protein_indices = list(set(valid_df['protein_idx'].values))
+        all_disease_indices = list(set(valid_df['disease_idx'].values))
+
+        neg_drug_indices = torch.tensor(np.random.choice(all_drug_indices, num_neg, replace=True), dtype=torch.long)
+        neg_protein_indices = torch.tensor(np.random.choice(all_protein_indices, num_neg, replace=True), dtype=torch.long)
+        neg_disease_indices = torch.tensor(np.random.choice(all_disease_indices, num_neg, replace=True), dtype=torch.long)
         
         neg_existence_labels = torch.zeros(num_neg, dtype=torch.float)
         neg_protein_importance = torch.zeros(num_neg, dtype=torch.float)
