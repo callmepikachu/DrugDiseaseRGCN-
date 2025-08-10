@@ -110,15 +110,30 @@ class AttentionFusion(nn.Module):
             disease_emb: [batch_size, hidden_dim]
         """
         batch_size = drug_emb.size(0)
-        
+
+        # 检查输入是否有效
+        if batch_size == 0:
+            raise ValueError("Empty batch")
+
+        if drug_emb.size(1) != self.hidden_dim or protein_emb.size(1) != self.hidden_dim or disease_emb.size(1) != self.hidden_dim:
+            raise ValueError(f"Embedding dimension mismatch: expected {self.hidden_dim}, got drug={drug_emb.size(1)}, protein={protein_emb.size(1)}, disease={disease_emb.size(1)}")
+
+        # 检查是否有NaN
+        if torch.isnan(drug_emb).any() or torch.isnan(protein_emb).any() or torch.isnan(disease_emb).any():
+            raise ValueError("NaN detected in input embeddings")
+
         # 堆叠三个实体的嵌入 [batch_size, 3, hidden_dim]
         entities = torch.stack([drug_emb, protein_emb, disease_emb], dim=1)
-        
+
         # 计算注意力
         Q = self.query(entities).view(batch_size, 3, self.num_heads, self.head_dim).transpose(1, 2)
         K = self.key(entities).view(batch_size, 3, self.num_heads, self.head_dim).transpose(1, 2)
         V = self.value(entities).view(batch_size, 3, self.num_heads, self.head_dim).transpose(1, 2)
-        
+
+        # 检查Q, K, V是否有效
+        if torch.isnan(Q).any() or torch.isnan(K).any() or torch.isnan(V).any():
+            raise ValueError("NaN detected in Q, K, or V")
+
         # 计算注意力分数
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
         attn_weights = F.softmax(scores, dim=-1)

@@ -360,19 +360,37 @@ class TripleRelationTrainer:
             
             self.optimizer.zero_grad()
             
-            # 检查索引是否在有效范围内
+            # 详细检查索引范围和数据有效性
+            embeddings_size = node_embeddings.size(0)
+
+            # 检查是否有负数索引
+            if (drug_idx < 0).any() or (protein_idx < 0).any() or (disease_idx < 0).any():
+                self.logger.error(f"Negative indices found: drug_min={drug_idx.min()}, protein_min={protein_idx.min()}, disease_min={disease_idx.min()}")
+                continue
+
+            # 检查最大索引
             max_drug_idx = drug_idx.max().item()
             max_protein_idx = protein_idx.max().item()
             max_disease_idx = disease_idx.max().item()
 
-            if max_drug_idx >= node_embeddings.size(0) or max_protein_idx >= node_embeddings.size(0) or max_disease_idx >= node_embeddings.size(0):
-                self.logger.error(f"Index out of range: drug={max_drug_idx}, protein={max_protein_idx}, disease={max_disease_idx}, embeddings_size={node_embeddings.size(0)}")
+            if max_drug_idx >= embeddings_size or max_protein_idx >= embeddings_size or max_disease_idx >= embeddings_size:
+                self.logger.error(f"Index out of range: drug_max={max_drug_idx}, protein_max={max_protein_idx}, disease_max={max_disease_idx}, embeddings_size={embeddings_size}")
+                self.logger.error(f"Drug indices range: [{drug_idx.min()}, {drug_idx.max()}]")
+                self.logger.error(f"Protein indices range: [{protein_idx.min()}, {protein_idx.max()}]")
+                self.logger.error(f"Disease indices range: [{disease_idx.min()}, {disease_idx.max()}]")
                 continue  # 跳过这个批次
 
+            # 获取嵌入并检查是否有NaN
+            drug_emb = node_embeddings[drug_idx]
+            protein_emb = node_embeddings[protein_idx]
+            disease_emb = node_embeddings[disease_idx]
+
+            if torch.isnan(drug_emb).any() or torch.isnan(protein_emb).any() or torch.isnan(disease_emb).any():
+                self.logger.error("NaN detected in embeddings")
+                continue
+
             # 前向传播
-            predictions = self.model.predict_triple_relations(
-                node_embeddings, drug_idx, protein_idx, disease_idx
-            )
+            predictions = self.model.predictor(drug_emb, protein_emb, disease_emb)
             
             # 计算多任务损失
             task_weights = self.config['model']['task_weights']
