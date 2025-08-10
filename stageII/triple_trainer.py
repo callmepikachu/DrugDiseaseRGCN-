@@ -93,50 +93,78 @@ class TripleRelationTrainer:
         self.triple_df = pd.read_csv(triple_file)
         self.logger.info(f"Loaded {len(self.triple_df)} triple relations")
         
-        # 准备图数据
-        self.prepare_graph_data(hetero_data)
-        
         # 准备训练数据
         self.prepare_training_data()
+
+        # 准备图数据（在训练数据准备后，因为需要节点映射）
+        self.prepare_graph_data(hetero_data)
     
     def prepare_graph_data(self, hetero_data):
         """准备图数据"""
-        # 这里简化处理，实际应该从hetero_data中提取
-        # 为演示目的，创建模拟的图结构
-        
-        # 创建边索引和边类型
-        num_edges = min(10000, self.num_nodes * 5)  # 限制边数以节省内存
-        
-        self.edge_index = torch.randint(0, self.num_nodes, (2, num_edges), device=self.device)
-        self.edge_type = torch.randint(0, self.num_relations, (num_edges,), device=self.device)
-        
+        # 基于三元关系构建图结构
+        edges = []
+        edge_types = []
+
+        # 从三元关系中提取边
+        for _, row in self.triple_df.iterrows():
+            drug_idx = self.mappings['node_to_idx'][row['drug_id']]
+            protein_idx = self.mappings['node_to_idx'][row['protein_id']]
+            disease_idx = self.mappings['node_to_idx'][row['disease_id']]
+
+            # 添加药物-蛋白质边
+            edges.append([drug_idx, protein_idx])
+            edge_types.append(0)  # 药物-蛋白质关系类型
+
+            # 添加蛋白质-疾病边
+            edges.append([protein_idx, disease_idx])
+            edge_types.append(1)  # 蛋白质-疾病关系类型
+
+        # 转换为张量
+        if len(edges) > 0:
+            self.edge_index = torch.tensor(edges, dtype=torch.long, device=self.device).t()
+            self.edge_type = torch.tensor(edge_types, dtype=torch.long, device=self.device)
+        else:
+            # 如果没有边，创建最小的图结构
+            self.edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=self.device).t()
+            self.edge_type = torch.tensor([0, 0], dtype=torch.long, device=self.device)
+
+        num_edges = self.edge_index.shape[1]
         self.logger.info(f"Graph: {self.num_nodes} nodes, {num_edges} edges, {self.num_relations} relations")
     
     def prepare_training_data(self):
         """准备训练数据"""
         self.logger.info("Preparing training data...")
         
-        # 将实体ID映射到索引
-        node_to_idx = self.mappings['node_to_idx']
-        
-        # 过滤存在于映射中的三元组
+        # 创建新的节点映射，包含三元关系中的所有节点
+        all_nodes = set()
+        for _, row in self.triple_df.iterrows():
+            all_nodes.add(row['drug_id'])
+            all_nodes.add(row['protein_id'])
+            all_nodes.add(row['disease_id'])
+
+        # 创建节点到索引的映射
+        node_to_idx = {node: idx for idx, node in enumerate(sorted(all_nodes))}
+        idx_to_node = {idx: node for node, idx in node_to_idx.items()}
+
+        self.logger.info(f"Created mapping for {len(node_to_idx)} unique nodes")
+
+        # 更新映射信息
+        self.mappings['node_to_idx'] = node_to_idx
+        self.mappings['idx_to_node'] = idx_to_node
+        self.num_nodes = len(node_to_idx)
+
+        # 转换三元组
         valid_triples = []
         for _, row in self.triple_df.iterrows():
-            if (row['drug_id'] in node_to_idx and 
-                row['protein_id'] in node_to_idx and 
-                row['disease_id'] in node_to_idx):
-                valid_triples.append({
-                    'drug_idx': node_to_idx[row['drug_id']],
-                    'protein_idx': node_to_idx[row['protein_id']],
-                    'disease_idx': node_to_idx[row['disease_id']],
-                    'drug_protein_relation': row['drug_protein_relation'],
-                    'protein_disease_relation': row['protein_disease_relation']
-                })
-        
+            valid_triples.append({
+                'drug_idx': node_to_idx[row['drug_id']],
+                'protein_idx': node_to_idx[row['protein_id']],
+                'disease_idx': node_to_idx[row['disease_id']],
+                'drug_protein_relation': row['drug_protein_relation'],
+                'protein_disease_relation': row['protein_disease_relation']
+            })
+
         self.logger.info(f"Valid triples: {len(valid_triples)}")
-        
-        if len(valid_triples) == 0:
-            raise ValueError("No valid triples found")
         
         # 转换为张量
         valid_df = pd.DataFrame(valid_triples)
