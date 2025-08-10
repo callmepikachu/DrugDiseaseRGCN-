@@ -148,14 +148,17 @@ class TripleRelationTrainer:
         # 创建新的节点映射，包含三元关系中的所有节点
         all_nodes = set()
         for _, row in self.triple_df.iterrows():
-            all_nodes.add(row['drug_id'])
-            all_nodes.add(row['protein_id'])
-            all_nodes.add(row['disease_id'])
+            all_nodes.add(str(row['drug_id']))  # 确保都是字符串
+            all_nodes.add(str(row['protein_id']))
+            all_nodes.add(str(row['disease_id']))
 
-        # 创建节点到索引的映射（将所有节点ID转换为字符串以避免排序问题）
-        all_nodes_str = [str(node) for node in all_nodes]
-        node_to_idx = {node: idx for idx, node in enumerate(sorted(all_nodes_str))}
+        # 创建节点到索引的映射
+        sorted_nodes = sorted(all_nodes)
+        node_to_idx = {node: idx for idx, node in enumerate(sorted_nodes)}
         idx_to_node = {idx: node for node, idx in node_to_idx.items()}
+
+        self.logger.info(f"Node mapping created: {len(sorted_nodes)} unique nodes")
+        self.logger.info(f"Index range: 0 to {len(sorted_nodes)-1}")
 
         self.logger.info(f"Created mapping for {len(node_to_idx)} unique nodes")
 
@@ -199,6 +202,22 @@ class TripleRelationTrainer:
         all_drug_indices = list(set(valid_df['drug_idx'].values))
         all_protein_indices = list(set(valid_df['protein_idx'].values))
         all_disease_indices = list(set(valid_df['disease_idx'].values))
+
+        # 验证索引范围
+        max_drug_idx = max(all_drug_indices) if all_drug_indices else 0
+        max_protein_idx = max(all_protein_indices) if all_protein_indices else 0
+        max_disease_idx = max(all_disease_indices) if all_disease_indices else 0
+
+        self.logger.info(f"Negative sampling - Drug indices: [0, {max_drug_idx}], Protein: [0, {max_protein_idx}], Disease: [0, {max_disease_idx}]")
+        self.logger.info(f"Total nodes: {self.num_nodes}")
+
+        # 确保所有索引都在有效范围内
+        all_drug_indices = [idx for idx in all_drug_indices if idx < self.num_nodes]
+        all_protein_indices = [idx for idx in all_protein_indices if idx < self.num_nodes]
+        all_disease_indices = [idx for idx in all_disease_indices if idx < self.num_nodes]
+
+        if not all_drug_indices or not all_protein_indices or not all_disease_indices:
+            raise ValueError("No valid indices found for negative sampling")
 
         neg_drug_indices = torch.tensor(np.random.choice(all_drug_indices, num_neg, replace=True), dtype=torch.long)
         neg_protein_indices = torch.tensor(np.random.choice(all_protein_indices, num_neg, replace=True), dtype=torch.long)
