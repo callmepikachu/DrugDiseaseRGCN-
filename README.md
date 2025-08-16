@@ -115,11 +115,11 @@ python src/evaluate.py --model_path checkpoints/best_model.pth
 
 | 指标 | 验证集 | 测试集 | 说明 |
 |------|--------|--------|------|
-| AUC | 0.9816 | 0.9816 | ROC曲线下面积，接近完美分类 |
-| AP | 0.9885 | 0.9881 | 平均精度，排序质量极高 |
-| Precision@10 | 1.0000 | 1.0000 | Top-10预测100%准确 |
-| Precision@50 | 1.0000 | 1.0000 | Top-50预测100%准确 |
-| Precision@100 | 1.0000 | 1.0000 | Top-100预测100%准确 |
+| AUC | 0.9816 | 0.9816 | ROC曲线下面积 |
+| AP | 0.9885 | 0.9881 | 平均精度 |
+| Precision@10 | 1.0000 | 1.0000 | Top-10预测 |
+| Precision@50 | 1.0000 | 1.0000 | Top-50预测 |
+| Precision@100 | 1.0000 | 1.0000 | Top-100 |
 | 整体准确率 | - | 0.9400 | 总体分类准确率 |
 
 #### 关系类型预测
@@ -158,19 +158,3 @@ python src/evaluate.py --model_path checkpoints/best_model.pth
 - **训练轮数**: 50
 - **负采样比例**: 0.5
 
-## 引用
-
-如果使用本项目，请引用：
-
-```bibtex
-@article{chandak2022building,
-  title={Building a knowledge graph to enable precision medicine},
-  author={Chandak, Payal and Huang, Kexin and Zitnik, Marinka},
-  journal={Nature Scientific Data},
-  year={2023}
-}
-```
-
-## 许可证
-
-MIT License
