@@ -22,8 +22,8 @@ training:
   batch_size: 512
   learning_rate: 0.001
   weight_decay: 0.00001
-  num_epochs: 50
-  patience: 10  # early stopping patience
+  num_epochs: 100
+  patience: 20  # early stopping patience
   gradient_clip: 1.0
   
   # 学习率调度
@@ -35,8 +35,8 @@ training:
   
   # 损失函数配置
   loss:
-    type: "clip" # 或 "bce_ce" (用于回退测试)
-    clip_temperature: 0.07
+    type: "clip" # "clip" # 或 "bce_ce" (用于回退测试)
+    clip_temperature: 0.5
 
 # 评估配置
 evaluation:

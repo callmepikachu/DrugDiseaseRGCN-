@@ -327,12 +327,22 @@ class Trainer:
 
             # 计算损失
             if self.loss_type == 'clip':
-                # 使用CLIP损失
-                drug_emb = node_embeddings[data['edge_index'][0]]
-                disease_emb = node_embeddings[data['edge_index'][1]]
-                total_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
-                existence_loss = torch.tensor(0.0)  # CLIP模式下不计算existence_loss
-                relation_loss = torch.tensor(0.0)  # CLIP模式下不计算relation_loss
+                # 使用CLIP损失 (只使用正样本)
+                positive_mask = (data['existence_labels'] == 1)
+                positive_head_indices = data['edge_index'][0][positive_mask]
+                positive_tail_indices = data['edge_index'][1][positive_mask]
+                
+                # 检查是否有正样本
+                if positive_head_indices.numel() > 0:
+                    drug_emb = node_embeddings[positive_head_indices]
+                    disease_emb = node_embeddings[positive_tail_indices]
+                    total_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
+                else:
+                    # 如果没有正样本，创建一个占位损失
+                    total_loss = torch.tensor(0.0, device=self.device)
+                
+                existence_loss = torch.tensor(0.0, device=self.device)  # CLIP模式下不计算existence_loss
+                relation_loss = torch.tensor(0.0, device=self.device)  # CLIP模式下不计算relation_loss
             else:
                 # 使用原有的BCE+CE损失
                 existence_loss = self.existence_criterion(existence_scores, data['existence_labels'].float())
