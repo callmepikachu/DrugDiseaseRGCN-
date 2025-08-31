@@ -209,7 +209,7 @@ class Trainer:
         total_loss = 0
         num_batches = 0
         
-        # 创建数据加载器
+        # 创建数据加载器 (这包含正负样本)
         dataset = TensorDataset(
             self.train_data['edge_index'][0],      # head
             self.train_data['edge_index'][1],      # tail
@@ -238,24 +238,40 @@ class Trainer:
             )
             # 现在 node_embeddings 是通过模型计算得出的，并且启用了梯度追踪 (假设模型参数 requires_grad=True)
 
-            # 前向传播
-            existence_scores, relation_logits = self.model.predict_links(
-                node_embeddings, head_indices, tail_indices
-            )
-
-            # 计算损失
+            # --- 关键修改：根据损失类型筛选输入数据 ---
             if self.loss_type == 'clip':
-                # 使用CLIP损失
-                drug_emb = node_embeddings[head_indices]
-                disease_emb = node_embeddings[tail_indices]
+                # 1. 筛选出正样本 (existence_labels == 1)
+                positive_mask = (existence_labels == 1)
+                # 2. 只取正样本的索引和标签用于 CLIP 损失计算
+                # 注意：如果一个 batch 全是负样本，positive_head_indices 会是空的，需要处理
+                positive_head_indices = head_indices[positive_mask]
+                positive_tail_indices = tail_indices[positive_mask]
+                
+                # 如果当前 batch 没有正样本，则跳过损失计算和反向传播
+                if positive_head_indices.numel() == 0: 
+                     # 或者可以创建一个很小的占位损失，例如: total_batch_loss = 0 * node_embeddings.sum()
+                     # 这里选择跳过
+                     self.logger.warning(f"Batch {batch_idx} contains no positive samples for CLIP loss, skipping.")
+                     continue
+
+                # 3. 使用正样本索引获取嵌入
+                drug_emb = node_embeddings[positive_head_indices]   # [num_positives_in_batch, D]
+                disease_emb = node_embeddings[positive_tail_indices] # [num_positives_in_batch, D]
+                
+                # 4. 计算 CLIP 损失 (现在输入确实是成对的正样本)
                 total_batch_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
-            else:
+                
+            else: # BCE+CE
+                # 前向传播 (使用所有样本)
+                existence_scores, relation_logits = self.model.predict_links(
+                    node_embeddings, head_indices, tail_indices
+                )
                 # 使用原有的BCE+CE损失
                 existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
                 relation_loss = self.relation_criterion(relation_logits, relation_labels)
                 total_batch_loss = existence_loss + relation_loss
 
-            # 反向传播
+            # 反向传播 (现在 total_batch_loss 是基于正确输入计算的)
             total_batch_loss.backward()
             
             # 梯度裁剪
@@ -276,7 +292,7 @@ class Trainer:
                     self.logger.info(
                         f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}'
                     )
-                else:
+                else: # BCE+CE
                     existence_loss_val = existence_loss.item() if 'existence_loss' in locals() else 0
                     relation_loss_val = relation_loss.item() if 'relation_loss' in locals() else 0
                     self.logger.info(
@@ -284,6 +300,11 @@ class Trainer:
                         f'Existence Loss: {existence_loss_val:.4f}, Relation Loss: {relation_loss_val:.4f}'
                     )
         
+        # 避免除零错误
+        if num_batches == 0:
+            self.logger.warning("No batches processed in this epoch.")
+            return float('inf') # 或者其他合适的值
+            
         return total_loss / num_batches
     
     def evaluate(self, data, split_name="val"):
