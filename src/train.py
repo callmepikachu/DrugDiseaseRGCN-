@@ -16,8 +16,8 @@ from data_loader import PrimeKGDataLoader
 from model import DrugDiseaseRGCN
 from utils import (
     set_seed, load_config, setup_logging, get_device,
-    split_edges, prepare_multitask_data, calculate_metrics,
-    save_model, print_model_info, EarlyStopping
+    split_edges, split_edges_cross_disease, prepare_multitask_data, calculate_metrics,
+    save_model, print_model_info, EarlyStopping, clip_loss, NegativeSampler
 )
 
 
@@ -46,9 +46,16 @@ class Trainer:
         self.model = None
         self.optimizer = None
         self.scheduler = None
-        # 多任务损失函数
-        self.existence_criterion = nn.BCEWithLogitsLoss()  # 关系存在性
-        self.relation_criterion = nn.CrossEntropyLoss(ignore_index=-1)  # 关系类型，忽略负样本
+        
+        # 读取损失函数配置
+        self.loss_config = config.get('training', {}).get('loss', {'type': 'bce_ce'})
+        self.loss_type = self.loss_config.get('type', 'bce_ce')
+        self.clip_temperature = self.loss_config.get('clip_temperature', 0.07)
+        
+        # 多任务损失函数 (仅在使用bce_ce时使用)
+        if self.loss_type == 'bce_ce':
+            self.existence_criterion = nn.BCEWithLogitsLoss()  # 关系存在性
+            self.relation_criterion = nn.CrossEntropyLoss(ignore_index=-1)  # 关系类型，忽略负样本
         
         # 早停
         self.early_stopping = EarlyStopping(
@@ -92,13 +99,24 @@ class Trainer:
         edge_index = torch.tensor(edge_list, dtype=torch.long).t()
         edge_type = torch.tensor(edge_types, dtype=torch.long)
         
-        # 分割数据
-        train_data, val_data, test_data = split_edges(
-            edge_index, edge_type,
-            test_ratio=self.config['data']['test_ratio'],
-            val_ratio=self.config['data']['val_ratio'],
-            seed=self.config['seed']
-        )
+        # 根据配置选择分割方式
+        evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
+        if evaluation_mode == 'cross_disease':
+            self.logger.info("使用Cross-Disease Split模式")
+            train_data, val_data, test_data = split_edges_cross_disease(
+                edge_index, edge_type, drug_disease_df, mappings,
+                test_ratio=self.config['data']['test_ratio'],
+                val_ratio=self.config['data']['val_ratio'],
+                seed=self.config['seed']
+            )
+        else:
+            self.logger.info("使用标准分割模式")
+            train_data, val_data, test_data = split_edges(
+                edge_index, edge_type,
+                test_ratio=self.config['data']['test_ratio'],
+                val_ratio=self.config['data']['val_ratio'],
+                seed=self.config['seed']
+            )
 
         # 创建全局正样本边集合，避免数据泄露
         all_positive_edges = set()
@@ -207,12 +225,17 @@ class Trainer:
                 node_embeddings, head_indices, tail_indices
             )
 
-            # 计算多任务损失
-            existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
-            relation_loss = self.relation_criterion(relation_logits, relation_labels)
-
-            # 总损失（可以添加权重）
-            total_batch_loss = existence_loss + relation_loss
+            # 计算损失
+            if self.loss_type == 'clip':
+                # 使用CLIP损失
+                drug_emb = node_embeddings[head_indices]
+                disease_emb = node_embeddings[tail_indices]
+                total_batch_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
+            else:
+                # 使用原有的BCE+CE损失
+                existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
+                relation_loss = self.relation_criterion(relation_logits, relation_labels)
+                total_batch_loss = existence_loss + relation_loss
 
             # 反向传播
             total_batch_loss.backward()
@@ -231,10 +254,17 @@ class Trainer:
 
             # 记录日志
             if batch_idx % self.config['logging']['log_interval'] == 0:
-                self.logger.info(
-                    f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}, '
-                    f'Existence Loss: {existence_loss.item():.4f}, Relation Loss: {relation_loss.item():.4f}'
-                )
+                if self.loss_type == 'clip':
+                    self.logger.info(
+                        f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}'
+                    )
+                else:
+                    existence_loss_val = existence_loss.item() if 'existence_loss' in locals() else 0
+                    relation_loss_val = relation_loss.item() if 'relation_loss' in locals() else 0
+                    self.logger.info(
+                        f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}, '
+                        f'Existence Loss: {existence_loss_val:.4f}, Relation Loss: {relation_loss_val:.4f}'
+                    )
         
         return total_loss / num_batches
     
@@ -257,9 +287,18 @@ class Trainer:
             )
 
             # 计算损失
-            existence_loss = self.existence_criterion(existence_scores, data['existence_labels'].float())
-            relation_loss = self.relation_criterion(relation_logits, data['relation_labels'])
-            total_loss = existence_loss + relation_loss
+            if self.loss_type == 'clip':
+                # 使用CLIP损失
+                drug_emb = node_embeddings[data['edge_index'][0]]
+                disease_emb = node_embeddings[data['edge_index'][1]]
+                total_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
+                existence_loss = torch.tensor(0.0)  # CLIP模式下不计算existence_loss
+                relation_loss = torch.tensor(0.0)  # CLIP模式下不计算relation_loss
+            else:
+                # 使用原有的BCE+CE损失
+                existence_loss = self.existence_criterion(existence_scores, data['existence_labels'].float())
+                relation_loss = self.relation_criterion(relation_logits, data['relation_labels'])
+                total_loss = existence_loss + relation_loss
 
             # 关系存在性评估
             existence_y_true = data['existence_labels'].cpu().numpy()

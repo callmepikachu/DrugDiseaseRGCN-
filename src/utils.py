@@ -6,6 +6,7 @@ import os
 import random
 import numpy as np
 import torch
+import torch.nn.functional as F
 import yaml
 from typing import Dict, Any, Tuple, List
 import pandas as pd
@@ -61,6 +62,43 @@ def get_device(device_config: str) -> torch.device:
     return device
 
 
+def clip_loss(
+    drug_embeddings: torch.Tensor,      # [N, D] - N个药物的嵌入
+    disease_embeddings: torch.Tensor,   # [M, D] - M个疾病的嵌入
+    temperature: float = 0.07           # Temperature parameter
+) -> torch.Tensor:
+    """
+    计算 CLIP 风格的对称对比损失 (InfoNCE)。
+    假设 drug_embeddings 和 disease_embeddings 是成对对齐的，
+    即 drug_embeddings[i] 与 disease_embeddings[i] 是正样本对。
+    """
+    device = drug_embeddings.device
+
+    # 1. L2 归一化嵌入
+    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)      # [N, D]
+    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1) # [M, D]
+
+    # 2. 计算 logits: cosine similarity scaled by temperature
+    # logits[i][j] 表示第 i 个药物和第 j 个疾病的相似度
+    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) * torch.exp(torch.tensor(temperature)).to(device) # [N, M]
+
+    # 3. 真实标签：假设输入是 N 对正样本，所以匹配对是 (0,0), (1,1), ..., (N-1,N-1)
+    if drug_embeddings.shape[0] != disease_embeddings.shape[0]:
+        raise ValueError("Drug and disease embeddings must be paired and of equal length for this CLIP loss.")
+    batch_size = drug_embeddings.shape[0]
+    labels = torch.arange(batch_size, device=device) # [N]
+
+    # 4. 计算两个方向的损失
+    # 4a. 药物到疾病的损失 (对每行进行 CE)
+    loss_drug_to_disease = F.cross_entropy(logits, labels)
+    # 4b. 疾病到药物的损失 (对每列进行 CE, 通过对 logits 转置实现)
+    loss_disease_to_drug = F.cross_entropy(logits.t(), labels)
+
+    # 5. 返回对称损失
+    total_loss = (loss_drug_to_disease + loss_disease_to_drug) / 2.0
+    return total_loss
+
+
 def create_negative_samples(
     positive_edges: torch.Tensor,
     num_nodes: int,
@@ -86,6 +124,95 @@ def create_negative_samples(
             existing_edges.add((head, tail))
     
     return torch.tensor(negative_edges, dtype=torch.long).t()
+
+
+class NegativeSampler:
+    """负采样器，从预生成的负样本中采样"""
+    
+    def __init__(self, negative_file: str, node_to_idx: Dict):
+        self.node_to_idx = node_to_idx
+        self.idx_to_node = {idx: node for node, idx in node_to_idx.items()}
+        
+        # 加载负样本数据
+        print("正在加载负样本数据...")
+        # 由于文件可能很大，我们只加载部分数据用于初始化
+        self.negative_df = pd.read_csv(negative_file, nrows=100000)
+        print(f"负样本数据形状: {self.negative_df.shape}")
+        
+        # 创建药物和疾病的映射
+        self.drug_to_negatives = {}
+        self.disease_to_negatives = {}
+        
+        # 初始化映射
+        for _, row in self.negative_df.iterrows():
+            drug_id = row['drug_id']
+            disease_id = row['disease_id']
+            
+            # 添加到药物的负样本列表
+            if drug_id not in self.drug_to_negatives:
+                self.drug_to_negatives[drug_id] = []
+            self.drug_to_negatives[drug_id].append(disease_id)
+            
+            # 添加到疾病的负样本列表
+            if disease_id not in self.disease_to_negatives:
+                self.disease_to_negatives[disease_id] = []
+            self.disease_to_negatives[disease_id].append(drug_id)
+    
+    def get_negatives_by_drug(self, drug_id: str) -> List[str]:
+    """根据药物ID获取负样本疾病列表"""
+        return self.drug_to_negatives.get(drug_id, [])
+    
+    def get_negatives_by_disease(self, disease_id: str) -> List[str]:
+        """根据疾病ID获取负样本药物列表"""
+        return self.disease_to_negatives.get(disease_id, [])
+    
+    def sample_negative_edges(self, positive_edges: torch.Tensor, num_negative: int) -> torch.Tensor:
+        """从预生成的负样本中采样负边"""
+        negative_edges = []
+        sampled = set()
+        
+        # 转换正样本为集合以便快速查找
+        positive_set = set()
+        for i in range(positive_edges.shape[1]):
+            head, tail = positive_edges[0, i].item(), positive_edges[1, i].item()
+            positive_set.add((head, tail))
+        
+        # 尝试从预生成的负样本中采样
+        attempts = 0
+        max_attempts = num_negative * 10  # 最大尝试次数
+        
+        while len(negative_edges) < num_negative and attempts < max_attempts:
+            attempts += 1
+            
+            # 随机选择一个负样本
+            idx = random.randint(0, len(self.negative_df) - 1)
+            row = self.negative_df.iloc[idx]
+            
+            drug_id = row['drug_id']
+            disease_id = row['disease_id']
+            
+            # 检查药物和疾病是否在节点映射中
+            if drug_id in self.node_to_idx and disease_id in self.node_to_idx:
+                head = self.node_to_idx[drug_id]
+                tail = self.node_to_idx[disease_id]
+                
+                # 检查是否已经采样过或者在正样本中
+                if (head, tail) not in sampled and (head, tail) not in positive_set:
+                    negative_edges.append([head, tail])
+                    sampled.add((head, tail))
+        
+        # 如果采样不足，使用随机采样补充
+        if len(negative_edges) < num_negative:
+            print(f"从预生成负样本中只采样到 {len(negative_edges)} 个，使用随机采样补充...")
+            while len(negative_edges) < num_negative:
+                head = random.randint(0, len(self.node_to_idx) - 1)
+                tail = random.randint(0, len(self.node_to_idx) - 1)
+                
+                if head != tail and (head, tail) not in sampled and (head, tail) not in positive_set:
+                    negative_edges.append([head, tail])
+                    sampled.add((head, tail))
+        
+        return torch.tensor(negative_edges, dtype=torch.long).t()
 
 
 def split_edges(
@@ -122,6 +249,58 @@ def split_edges(
     test_data = {
         'edge_index': edge_index[:, test_indices],
         'edge_type': edge_type[test_indices]
+    }
+    
+    return train_data, val_data, test_data
+
+
+def split_edges_cross_disease(
+    edge_index: torch.Tensor,
+    edge_type: torch.Tensor,
+    drug_disease_df: pd.DataFrame,
+    mappings: Dict,
+    test_ratio: float = 0.2,
+    val_ratio: float = 0.1,
+    seed: int = 42
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    """实现Cross-Disease Splits"""
+    # 获取所有唯一的疾病 ID
+    unique_diseases = drug_disease_df['y_id'].unique()  # 假设疾病是y_id
+    
+    # 随机划分疾病为训练、验证、测试集
+    train_diseases, temp_diseases = train_test_split(
+        unique_diseases, test_size=(test_ratio + val_ratio), random_state=seed
+    )
+    val_diseases, test_diseases = train_test_split(
+        temp_diseases, test_size=test_ratio/(test_ratio + val_ratio), random_state=seed
+    )
+    
+    # 创建疾病到索引的映射
+    node_to_idx = mappings['node_to_idx']
+    
+    # 根据划分的疾病集筛选边
+    def filter_edges_by_diseases(diseases):
+        mask = np.isin(edge_index[1].cpu().numpy(), [node_to_idx[d] for d in diseases if d in node_to_idx])
+        return edge_index[:, mask], edge_type[mask]
+    
+    train_edge_index, train_edge_type = filter_edges_by_diseases(train_diseases)
+    val_edge_index, val_edge_type = filter_edges_by_diseases(val_diseases)
+    test_edge_index, test_edge_type = filter_edges_by_diseases(test_diseases)
+    
+    # 创建数据集
+    train_data = {
+        'edge_index': train_edge_index,
+        'edge_type': train_edge_type
+    }
+    
+    val_data = {
+        'edge_index': val_edge_index,
+        'edge_type': val_edge_type
+    }
+    
+    test_data = {
+        'edge_index': test_edge_index,
+        'edge_type': test_edge_type
     }
     
     return train_data, val_data, test_data
@@ -180,6 +359,105 @@ def prepare_multitask_data(
     all_relation_labels = all_relation_labels[perm]
 
     return all_edge_index, all_existence_labels, all_relation_labels, perm
+
+
+def calculate_mrr(
+    node_embeddings: torch.Tensor,
+    test_edge_index: torch.Tensor,
+    mappings: Dict
+) -> Dict[str, float]:
+    """计算MRR指标"""
+    # 获取测试集中的唯一药物和疾病
+    unique_drugs = torch.unique(test_edge_index[0])
+    unique_diseases = torch.unique(test_edge_index[1])
+    
+    reciprocal_ranks_drug = []
+    reciprocal_ranks_disease = []
+    
+    # 计算药物到疾病的MRR
+    for drug_idx in unique_drugs:
+        # 获取与该药物相连的所有疾病
+        drug_mask = test_edge_index[0] == drug_idx
+        true_diseases = test_edge_index[1][drug_mask]
+        
+        if len(true_diseases) == 0:
+            continue
+            
+        # 计算该药物与所有疾病候选的相似度
+        drug_emb = node_embeddings[drug_idx].unsqueeze(0)  # [1, D]
+        disease_embs = node_embeddings[unique_diseases]    # [num_diseases, D]
+        
+        # L2归一化
+        drug_emb = F.normalize(drug_emb, p=2, dim=1)
+        disease_embs = F.normalize(disease_embs, p=2, dim=1)
+        
+        # 计算相似度得分
+        scores = torch.matmul(drug_emb, disease_embs.t()).squeeze()  # [num_diseases]
+        
+        # 获取排序索引（降序）
+        sorted_indices = torch.argsort(scores, descending=True)
+        
+        # 找到真实疾病的排名
+        for true_disease in true_diseases:
+            # 找到真实疾病在候选疾病中的索引
+            try:
+                disease_candidate_idx = (unique_diseases == true_disease).nonzero(as_tuple=True)[0]
+                if len(disease_candidate_idx) > 0:
+                    disease_candidate_idx = disease_candidate_idx[0].item()
+                    # 找到该疾病在排序中的位置
+                    rank = (sorted_indices == disease_candidate_idx).nonzero(as_tuple=True)[0]
+                    if len(rank) > 0:
+                        rank = rank[0].item() + 1  # 排名从1开始
+                        reciprocal_ranks_drug.append(1.0 / rank)
+            except Exception:
+                continue
+    
+    # 计算疾病到药物的MRR
+    for disease_idx in unique_diseases:
+        # 获取与该疾病相连的所有药物
+        disease_mask = test_edge_index[1] == disease_idx
+        true_drugs = test_edge_index[0][disease_mask]
+        
+        if len(true_drugs) == 0:
+            continue
+            
+        # 计算该疾病与所有药物候选的相似度
+        disease_emb = node_embeddings[disease_idx].unsqueeze(0)  # [1, D]
+        drug_embs = node_embeddings[unique_drugs]               # [num_drugs, D]
+        
+        # L2归一化
+        disease_emb = F.normalize(disease_emb, p=2, dim=1)
+        drug_embs = F.normalize(drug_embs, p=2, dim=1)
+        
+        # 计算相似度得分
+        scores = torch.matmul(disease_emb, drug_embs.t()).squeeze()  # [num_drugs]
+        
+        # 获取排序索引（降序）
+        sorted_indices = torch.argsort(scores, descending=True)
+        
+        # 找到真实药物的排名
+        for true_drug in true_drugs:
+            # 找到真实药物在候选药物中的索引
+            try:
+                drug_candidate_idx = (unique_drugs == true_drug).nonzero(as_tuple=True)[0]
+                if len(drug_candidate_idx) > 0:
+                    drug_candidate_idx = drug_candidate_idx[0].item()
+                    # 找到该药物在排序中的位置
+                    rank = (sorted_indices == drug_candidate_idx).nonzero(as_tuple=True)[0]
+                    if len(rank) > 0:
+                        rank = rank[0].item() + 1  # 排名从1开始
+                        reciprocal_ranks_disease.append(1.0 / rank)
+            except Exception:
+                continue
+    
+    # 计算MRR
+    mrr_by_drug = np.mean(reciprocal_ranks_drug) if reciprocal_ranks_drug else 0.0
+    mrr_by_disease = np.mean(reciprocal_ranks_disease) if reciprocal_ranks_disease else 0.0
+    
+    return {
+        'mrr_by_drug': mrr_by_drug,
+        'mrr_by_disease': mrr_by_disease
+    }
 
 
 def calculate_metrics(

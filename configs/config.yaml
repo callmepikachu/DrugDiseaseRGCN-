@@ -8,8 +8,6 @@ data:
   negative_sampling_ratio: 0.5  # 负样本与正样本的比例
   target_relations:  # 目标关系类型
     - "indication"
-    - "contraindication" 
-    - "off-label use"
 
 # 模型配置
 model:
@@ -34,6 +32,11 @@ training:
     factor: 0.5
     patience: 5
     min_lr: 0.000001
+  
+  # 损失函数配置
+  loss:
+    type: "clip" # 或 "bce_ce" (用于回退测试)
+    clip_temperature: 0.07
 
 # 评估配置
 evaluation:
@@ -43,7 +46,8 @@ evaluation:
     - "precision_at_k"
     - "recall_at_k"
   k_values: [10, 50, 100]
-  
+  mode: "standard"  # 或 "cross_disease"
+
 # 设备配置
 device: "auto"  # cuda, cpu, auto
 

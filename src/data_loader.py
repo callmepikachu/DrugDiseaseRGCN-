@@ -42,6 +42,10 @@ class PrimeKGDataLoader:
         self.primekg_url = "https://dataverse.harvard.edu/api/access/datafile/6180620"
         self.primekg_file = os.path.join(self.raw_dir, "kg.csv")
         
+        # 正负样本文件路径
+        self.positive_file = os.path.join(self.processed_dir, "positive.csv")
+        self.negative_file = os.path.join(self.processed_dir, "negative.csv")
+        
     def download_primekg(self):
         """下载PrimeKG数据集"""
         if os.path.exists(self.primekg_file):
@@ -70,6 +74,28 @@ class PrimeKGDataLoader:
         df = pd.read_csv(self.primekg_file, low_memory=False)
         print(f"数据形状: {df.shape}")
         print(f"列名: {df.columns.tolist()}")
+        return df
+    
+    def load_positive_samples(self) -> pd.DataFrame:
+        """加载正样本数据"""
+        if not os.path.exists(self.positive_file):
+            raise FileNotFoundError(f"正样本文件不存在: {self.positive_file}")
+        
+        print("正在加载正样本数据...")
+        df = pd.read_csv(self.positive_file)
+        print(f"正样本数据形状: {df.shape}")
+        return df
+    
+    def load_negative_samples(self) -> pd.DataFrame:
+        """加载负样本数据"""
+        if not os.path.exists(self.negative_file):
+            raise FileNotFoundError(f"负样本文件不存在: {self.negative_file}")
+        
+        print("正在加载负样本数据...")
+        # 由于负样本文件可能很大，我们只加载部分数据
+        # 在实际使用中，可能需要根据需要加载全部或部分数据
+        df = pd.read_csv(self.negative_file, nrows=100000)  # 限制加载10万行用于测试
+        print(f"负样本数据形状: {df.shape}")
         return df
     
     def filter_drug_disease_relations(self, df: pd.DataFrame) -> pd.DataFrame:

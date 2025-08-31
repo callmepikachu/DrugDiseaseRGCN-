@@ -15,7 +15,7 @@ from data_loader import PrimeKGDataLoader
 from model import DrugDiseaseRGCN
 from utils import (
     load_config, get_device, load_model, calculate_metrics,
-    prepare_multitask_data, split_edges
+    prepare_multitask_data, split_edges, split_edges_cross_disease, calculate_mrr
 )
 
 
@@ -65,13 +65,24 @@ class ModelEvaluator:
         edge_index = torch.tensor(edge_list, dtype=torch.long).t()
         edge_type = torch.tensor(edge_types, dtype=torch.long)
         
-        # 分割数据
-        train_data, val_data, test_data = split_edges(
-            edge_index, edge_type,
-            test_ratio=self.config['data']['test_ratio'],
-            val_ratio=self.config['data']['val_ratio'],
-            seed=self.config['seed']
-        )
+        # 根据配置选择分割方式
+        evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
+        if evaluation_mode == 'cross_disease':
+            print("使用Cross-Disease Split模式")
+            train_data, val_data, test_data = split_edges_cross_disease(
+                edge_index, edge_type, drug_disease_df, mappings,
+                test_ratio=self.config['data']['test_ratio'],
+                val_ratio=self.config['data']['val_ratio'],
+                seed=self.config['seed']
+            )
+        else:
+            print("使用标准分割模式")
+            train_data, val_data, test_data = split_edges(
+                edge_index, edge_type,
+                test_ratio=self.config['data']['test_ratio'],
+                val_ratio=self.config['data']['val_ratio'],
+                seed=self.config['seed']
+            )
 
         # 创建全局正样本边集合，避免数据泄露
         all_positive_edges = set()
@@ -85,6 +96,9 @@ class ModelEvaluator:
         # 创建完整图用于编码
         self.full_edge_index = edge_index.to(self.device)
         self.full_edge_type = edge_type.to(self.device)
+        
+        # 保存测试边索引用于MRR计算
+        self.test_edge_index = test_data['edge_index'].to(self.device)
         
         print(f"测试集大小: {len(self.test_data['existence_labels'])}")
     
@@ -171,6 +185,12 @@ class ModelEvaluator:
             for key, value in existence_metrics.items():
                 metrics[f'existence_{key}'] = value
             metrics['relation_accuracy'] = relation_accuracy
+            
+            # 计算MRR指标（如果在Cross-Disease模式下）
+            evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
+            if evaluation_mode == 'cross_disease':
+                mrr_metrics = calculate_mrr(node_embeddings, self.test_edge_index, self.mappings)
+                metrics.update(mrr_metrics)
         
         return metrics, existence_y_true, existence_y_pred, existence_y_score
     
