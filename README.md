@@ -117,14 +117,14 @@ python src/evaluate.py --model_path checkpoints/best_model.pth
 
 #### 关系存在性预测
 
-| 指标 | 验证集 | 测试集 | 说明 |
-|------|--------|--------|------|
-| AUC | 0.9816 | 0.9816 | ROC曲线下面积，接近完美分类 |
-| AP | 0.9885 | 0.9881 | 平均精度，排序质量极高 |
-| Precision@10 | 1.0000 | 1.0000 | Top-10预测100%准确 |
-| Precision@50 | 1.0000 | 1.0000 | Top-50预测100%准确 |
-| Precision@100 | 1.0000 | 1.0000 | Top-100预测100%准确 |
-| 整体准确率 | - | 0.9400 | 总体分类准确率 |
+| 指标 | 验证集 | 测试集 | 说明 |Baseline(arXiv:2501.01644)
+|------|--------|--------|------|------|
+| AUC | 0.9816 | 0.9816 | ROC曲线下面积 |-|
+| AP | 0.9885 | 0.9881 | 平均精度 |0.980 (Random Init) / 0.993 (LM Embedding)|
+| Precision@10 | 1.0000 | 1.0000 | Top-10预测 |-|
+| Precision@50 | 1.0000 | 1.0000 | Top-50预测 |-|
+| Precision@100 | 1.0000 | 1.0000 | Top-100 |-|
+| 整体准确率 | - | 0.9400 | 总体分类准确率 |-|
 
 #### 关系类型预测
 
@@ -145,9 +145,6 @@ python src/evaluate.py --model_path checkpoints/best_model.pth
 | 正样本 | 0.96 | 0.95 | 0.96 | 17,053 |
 | **加权平均** | **0.94** | **0.94** | **0.94** | **25,579** |
 
-### 数据完整性保证
-✅ **无数据泄露**: 负采样时严格排除所有分割中的正样本边，确保训练/验证/测试集完全独立
-
 ### 数据集统计
 - **训练集**: 89,523 个样本
 - **验证集**: 12,790 个样本
@@ -162,19 +159,3 @@ python src/evaluate.py --model_path checkpoints/best_model.pth
 - **训练轮数**: 50
 - **负采样比例**: 0.5
 
-## 引用
-
-如果使用本项目，请引用：
-
-```bibtex
-@article{chandak2022building,
-  title={Building a knowledge graph to enable precision medicine},
-  author={Chandak, Payal and Huang, Kexin and Zitnik, Marinka},
-  journal={Nature Scientific Data},
-  year={2023}
-}
-```
-
-## 许可证
-
-MIT License
