@@ -311,12 +311,16 @@ def prepare_multitask_data(
     edge_type: torch.Tensor,
     num_nodes: int,
     negative_sampling_ratio: float = 1.0,
-    all_positive_edges: set = None
+    all_positive_edges: set = None,
+    negative_df: pd.DataFrame = None,
+    mappings: Dict = None
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """准备多任务学习数据
 
     Args:
         all_positive_edges: 所有分割中的正样本边集合，用于避免数据泄露
+        negative_df: 预生成的负样本数据框
+        mappings: 节点映射字典
 
     Returns:
         tuple: (all_edge_index, existence_labels, relation_type_labels, perm)
@@ -328,24 +332,85 @@ def prepare_multitask_data(
     positive_existence_labels = torch.ones(num_positive)
     positive_relation_labels = edge_type.clone()
 
-    # 创建负样本 - 排除所有正样本边以避免数据泄露
-    if all_positive_edges is None:
-        # 如果没有提供全局正样本边，只排除当前分割的边（旧行为）
-        existing_edges = set()
+    # 创建负样本
+    if negative_df is not None and mappings is not None:
+        # 使用预生成的负样本
+        node_to_idx = mappings['node_to_idx']
+        
+        # 获取正样本中涉及的唯一药物和疾病
+        unique_drugs = set()
+        unique_diseases = set()
         for i in range(num_positive):
             head, tail = edge_index[0, i].item(), edge_index[1, i].item()
-            existing_edges.add((head, tail))
+            drug_id = mappings['idx_to_node'][head]
+            disease_id = mappings['idx_to_node'][tail]
+            unique_drugs.add(drug_id)
+            unique_diseases.add(disease_id)
+        
+        # 筛选负样本数据框中相关的负样本
+        filtered_negative_df = negative_df[
+            (negative_df['drug_id'].isin(unique_drugs)) & 
+            (negative_df['disease_id'].isin(unique_diseases))
+        ].copy()
+        
+        # 如果筛选后的负样本足够，从中随机采样
+        if len(filtered_negative_df) >= num_negative:
+            sampled_negative_df = filtered_negative_df.sample(n=num_negative, random_state=42)
+        else:
+            # 如果不够，使用所有筛选后的负样本
+            sampled_negative_df = filtered_negative_df
+            self.logger.warning(f"负样本不足，需要 {num_negative} 个，但只有 {len(filtered_negative_df)} 个")
+        
+        # 转换为节点索引
+        negative_edges = []
+        for _, row in sampled_negative_df.iterrows():
+            if row['drug_id'] in node_to_idx and row['disease_id'] in node_to_idx:
+                head_idx = node_to_idx[row['drug_id']]
+                tail_idx = node_to_idx[row['disease_id']]
+                negative_edges.append([head_idx, tail_idx])
+        
+        # 如果转换后的负样本不足，补充随机生成的负样本
+        if len(negative_edges) < num_negative:
+            # 创建负样本 - 排除所有正样本边以避免数据泄露
+            if all_positive_edges is None:
+                # 如果没有提供全局正样本边，只排除当前分割的边（旧行为）
+                existing_edges = set()
+                for i in range(num_positive):
+                    head, tail = edge_index[0, i].item(), edge_index[1, i].item()
+                    existing_edges.add((head, tail))
+            else:
+                # 使用全局正样本边集合，避免数据泄露
+                existing_edges = all_positive_edges.copy()
+            
+            # 补充随机生成的负样本
+            additional_negative_edges = create_negative_samples(
+                edge_index, num_nodes, num_negative - len(negative_edges), existing_edges
+            )
+            # 将补充的负样本添加到negative_edges中
+            for i in range(additional_negative_edges.shape[1]):
+                negative_edges.append([additional_negative_edges[0, i].item(), additional_negative_edges[1, i].item()])
+        
+        negative_edge_index = torch.tensor(negative_edges, dtype=torch.long).t()
     else:
-        # 使用全局正样本边集合，避免数据泄露
-        existing_edges = all_positive_edges.copy()
+        # 使用原有的负样本生成方法
+        # 创建负样本 - 排除所有正样本边以避免数据泄露
+        if all_positive_edges is None:
+            # 如果没有提供全局正样本边，只排除当前分割的边（旧行为）
+            existing_edges = set()
+            for i in range(num_positive):
+                head, tail = edge_index[0, i].item(), edge_index[1, i].item()
+                existing_edges.add((head, tail))
+        else:
+            # 使用全局正样本边集合，避免数据泄露
+            existing_edges = all_positive_edges.copy()
 
-    negative_edge_index = create_negative_samples(
-        edge_index, num_nodes, num_negative, existing_edges
-    )
+        negative_edge_index = create_negative_samples(
+            edge_index, num_nodes, num_negative, existing_edges
+        )
 
     # 负样本：存在关系=0，关系类型=-1（忽略）
-    negative_existence_labels = torch.zeros(num_negative)
-    negative_relation_labels = torch.full((num_negative,), -1, dtype=torch.long)  # -1表示忽略
+    negative_existence_labels = torch.zeros(negative_edge_index.shape[1])
+    negative_relation_labels = torch.full((negative_edge_index.shape[1],), -1, dtype=torch.long)  # -1表示忽略
 
     # 合并正负样本
     all_edge_index = torch.cat([edge_index, negative_edge_index], dim=1)
@@ -364,9 +429,85 @@ def prepare_multitask_data(
 def calculate_mrr(
     node_embeddings: torch.Tensor,
     test_edge_index: torch.Tensor,
+    test_existence_labels: torch.Tensor,
+    mappings: Dict,
+    target_entity: str = "drug",
+    k_values: List[int] = [10, 50]
+) -> float:
+    """
+    计算MRR指标
+    
+    Args:
+        node_embeddings: 节点嵌入 [num_nodes, embedding_dim]
+        test_edge_index: 测试边索引 [2, num_test_edges]
+        test_existence_labels: 测试标签 [num_test_edges]
+        mappings: 节点映射字典
+        target_entity: 目标实体类型 "drug" 或 "disease"
+        k_values: 用于扩展计算 MRR@k
+        
+    Returns:
+        float: MRR值
+    """
+    # 筛选正样本
+    positive_mask = test_existence_labels == 1
+    positive_test_edges = test_edge_index[:, positive_mask]
+    
+    if target_entity == "drug":
+        # 查询实体是药物
+        query_indices = torch.unique(positive_test_edges[0, :])  # 所有要查询的药物索引
+        candidate_indices = torch.unique(test_edge_index[1, :])  # 测试集中所有出现的疾病索引作为候选
+    else:
+        # 查询实体是疾病
+        query_indices = torch.unique(positive_test_edges[1, :])  # 所有要查询的疾病索引
+        candidate_indices = torch.unique(test_edge_index[0, :])  # 测试集中所有出现的药物索引作为候选
+    
+    # 获取候选实体嵌入
+    candidate_embeddings = node_embeddings[candidate_indices]
+    
+    # 计算MRR
+    reciprocal_ranks = []
+    
+    for q_idx in query_indices:
+        # 获取查询实体嵌入
+        q_emb = node_embeddings[q_idx].unsqueeze(0)  # [1, D]
+        
+        # 计算相似度得分
+        scores = torch.matmul(
+            F.normalize(q_emb, p=2, dim=1), 
+            F.normalize(candidate_embeddings, p=2, dim=1).t()
+        ).squeeze()  # [num_candidates]
+        
+        # 降序排序得分
+        sorted_candidate_indices = candidate_indices[torch.argsort(scores, descending=True)]
+        
+        # 找到与 q_idx 相连的真实正样本候选索引
+        if target_entity == "drug":
+            # 查找与药物 q_idx 相连的疾病
+            true_pos_mask = (positive_test_edges[0, :] == q_idx)
+            true_pos_candidates = positive_test_edges[1, true_pos_mask]
+        else:
+            # 查找与疾病 q_idx 相连的药物
+            true_pos_mask = (positive_test_edges[1, :] == q_idx)
+            true_pos_candidates = positive_test_edges[0, true_pos_mask]
+        
+        # 对每个真实正样本计算排名
+        for tp_cand_idx in true_pos_candidates:
+            # 找到其在排序中的位置
+            rank_positions = (sorted_candidate_indices == tp_cand_idx).nonzero(as_tuple=True)[0]
+            if len(rank_positions) > 0:
+                rank = rank_positions[0].item() + 1  # 排名从1开始
+                reciprocal_ranks.append(1.0 / rank)
+    
+    # 返回MRR值
+    return float(np.mean(reciprocal_ranks)) if reciprocal_ranks else 0.0
+
+
+def calculate_mrr_old(
+    node_embeddings: torch.Tensor,
+    test_edge_index: torch.Tensor,
     mappings: Dict
 ) -> Dict[str, float]:
-    """计算MRR指标"""
+    """计算MRR指标 (旧版本)"""
     # 获取测试集中的唯一药物和疾病
     unique_drugs = torch.unique(test_edge_index[0])
     unique_diseases = torch.unique(test_edge_index[1])

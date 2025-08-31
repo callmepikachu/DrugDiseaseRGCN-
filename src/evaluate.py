@@ -104,12 +104,21 @@ class ModelEvaluator:
     
     def _prepare_data_for_evaluation(self, data, all_positive_edges):
         """准备多任务评估数据"""
+        # 加载负样本数据
+        try:
+            negative_df = self.data_loader.load_negative_samples()
+        except Exception as e:
+            print(f"加载负样本数据失败: {e}")
+            negative_df = None
+            
         edge_index, existence_labels, relation_labels, _ = prepare_multitask_data(
             data['edge_index'],
             data['edge_type'],
             self.num_nodes,
             self.config['data']['negative_sampling_ratio'],
-            all_positive_edges
+            all_positive_edges,
+            negative_df,
+            self.mappings
         )
 
         return {
@@ -189,8 +198,22 @@ class ModelEvaluator:
             # 计算MRR指标（如果在Cross-Disease模式下）
             evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
             if evaluation_mode == 'cross_disease':
-                mrr_metrics = calculate_mrr(node_embeddings, self.test_edge_index, self.mappings)
-                metrics.update(mrr_metrics)
+                mrr_by_drug = calculate_mrr(
+                    node_embeddings, 
+                    self.test_data['edge_index'], 
+                    self.test_data['existence_labels'], 
+                    self.mappings, 
+                    target_entity="drug"
+                )
+                mrr_by_disease = calculate_mrr(
+                    node_embeddings, 
+                    self.test_data['edge_index'], 
+                    self.test_data['existence_labels'], 
+                    self.mappings, 
+                    target_entity="disease"
+                )
+                metrics['mrr_by_drug'] = mrr_by_drug
+                metrics['mrr_by_disease'] = mrr_by_disease
         
         return metrics, existence_y_true, existence_y_pred, existence_y_score
     

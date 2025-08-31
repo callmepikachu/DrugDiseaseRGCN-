@@ -64,6 +64,9 @@ class Trainer:
         
         # 创建保存目录
         os.makedirs(config['logging']['model_dir'], exist_ok=True)
+        
+        # 初始化负样本数据
+        self.negative_df = None
     
     def load_data(self):
         """加载数据"""
@@ -75,6 +78,14 @@ class Trainer:
         self.mappings = mappings
         self.num_nodes = mappings['num_nodes']
         self.num_relations = mappings['num_relations']
+        
+        # 加载负样本数据
+        try:
+            self.negative_df = self.data_loader.load_negative_samples()
+            self.logger.info(f"成功加载负样本数据，共 {len(self.negative_df)} 条记录")
+        except Exception as e:
+            self.logger.warning(f"加载负样本数据失败: {e}")
+            self.negative_df = None
         
         # 筛选目标关系
         target_relations = self.config['data']['target_relations']
@@ -144,7 +155,9 @@ class Trainer:
             data['edge_type'],
             self.num_nodes,
             self.config['data']['negative_sampling_ratio'],
-            all_positive_edges
+            all_positive_edges,
+            self.negative_df,
+            self.mappings
         )
 
         return {

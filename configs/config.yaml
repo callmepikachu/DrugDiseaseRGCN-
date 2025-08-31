@@ -46,7 +46,7 @@ evaluation:
     - "precision_at_k"
     - "recall_at_k"
   k_values: [10, 50, 100]
-  mode: "standard"  # 或 "cross_disease"
+  mode: "cross_disease"  # 或 "standard"
 
 # 设备配置
 device: "auto"  # cuda, cpu, auto
