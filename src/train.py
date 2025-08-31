@@ -223,15 +223,20 @@ class Trainer:
             shuffle=True
         )
         
-        # 编码所有节点
-        with torch.no_grad():
+        for batch_idx, (head_indices, tail_indices, existence_labels, relation_labels) in enumerate(dataloader):
+            self.optimizer.zero_grad()
+
+            # 编码所有节点 (在模型训练模式下，并启用梯度追踪)
+            # 注意：这会增加内存消耗，因为需要存储所有节点嵌入的计算图
+            # 一种更节省内存的方法是，在每个 batch 内只编码涉及的节点，但这需要更复杂的 dataloader 和模型设计。
+            # 当前实现为了简单起见，先采用编码所有节点的方式。
             node_indices = torch.arange(self.num_nodes, device=self.device)
+            # 确保 full_edge_index 和 full_edge_type 在正确的设备上并且需要梯度（如果它们是模型参数的一部分，通常是的）
+            # 但在这里，它们更像是输入数据，不需要梯度。模型参数的梯度会在 encode 内部被追踪。
             node_embeddings = self.model.encode(
                 node_indices, self.full_edge_index, self.full_edge_type
             )
-        
-        for batch_idx, (head_indices, tail_indices, existence_labels, relation_labels) in enumerate(dataloader):
-            self.optimizer.zero_grad()
+            # 现在 node_embeddings 是通过模型计算得出的，并且启用了梯度追踪 (假设模型参数 requires_grad=True)
 
             # 前向传播
             existence_scores, relation_logits = self.model.predict_links(

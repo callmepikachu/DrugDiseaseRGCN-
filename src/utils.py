@@ -159,7 +159,7 @@ class NegativeSampler:
             self.disease_to_negatives[disease_id].append(drug_id)
     
     def get_negatives_by_drug(self, drug_id: str) -> List[str]:
-    """根据药物ID获取负样本疾病列表"""
+        """根据药物ID获取负样本疾病列表"""
         return self.drug_to_negatives.get(drug_id, [])
     
     def get_negatives_by_disease(self, disease_id: str) -> List[str]:
@@ -359,7 +359,7 @@ def prepare_multitask_data(
         else:
             # 如果不够，使用所有筛选后的负样本
             sampled_negative_df = filtered_negative_df
-            self.logger.warning(f"负样本不足，需要 {num_negative} 个，但只有 {len(filtered_negative_df)} 个")
+            print(f"负样本不足，需要 {num_negative} 个，但只有 {len(filtered_negative_df)} 个")
         
         # 转换为节点索引
         negative_edges = []
