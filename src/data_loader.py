@@ -94,7 +94,7 @@ class PrimeKGDataLoader:
         print("正在加载负样本数据...")
         # 由于负样本文件可能很大，我们只加载部分数据
         # 在实际使用中，可能需要根据需要加载全部或部分数据
-        df = pd.read_csv(self.negative_file, nrows=100000)  # 限制加载10万行用于测试
+        df = pd.read_csv(self.negative_file)  # 限制加载10万行用于测试
         print(f"负样本数据形状: {df.shape}")
         return df
     

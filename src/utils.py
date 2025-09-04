@@ -84,11 +84,11 @@ def clip_loss(
     
     # --- 添加调试信息 ---
     # 打印 logits 的统计信息
-    # print(f"[Debug CLIP Loss] Logits shape: {logits.shape}")
-    # print(f"[Debug CLIP Loss] Logits mean: {logits.mean().item():.4f}")
-    # print(f"[Debug CLIP Loss] Logits std: {logits.std().item():.4f}")
-    # print(f"[Debug CLIP Loss] Logits min: {logits.min().item():.4f}")
-    # print(f"[Debug CLIP Loss] Logits max: {logits.max().item():.4f}")
+    print(f"[Debug CLIP Loss] Logits shape: {logits.shape}")
+    print(f"[Debug CLIP Loss] Logits mean: {logits.mean().item():.4f}")
+    print(f"[Debug CLIP Loss] Logits std: {logits.std().item():.4f}")
+    print(f"[Debug CLIP Loss] Logits min: {logits.min().item():.4f}")
+    print(f"[Debug CLIP Loss] Logits max: {logits.max().item():.4f}")
     # --- 调试信息结束 ---
 
     # 3. 真实标签：假设输入是 N 对正样本，所以匹配对是 (0,0), (1,1), ..., (N-1,N-1)
