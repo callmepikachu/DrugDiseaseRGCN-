@@ -227,33 +227,71 @@ class Trainer:
         total_loss = 0
         num_batches = 0
 
-        # --- 关键修改：准备正样本对数据 ---
-        # 假设 self.train_positive_pairs 是一个包含 (drug_idx, disease_idx) 的张量列表
-        # 形状: [2, num_positive_pairs]，或者分成两个 [num_positive_pairs] 的张量
-        drug_indices, disease_indices = self.train_positive_pairs
+        # --- 关键修改：为多标签CLIP准备数据 ---
+        # 获取当前批次中所有的药物和疾病索引（去重）
+        # 注意：这里我们直接使用 self.train_data，它包含了正负样本，但我们只关心正样本构建 mask
+        all_head_indices = self.train_data['edge_index'][0]
+        all_tail_indices = self.train_data['edge_index'][1]
+        all_existence_labels = self.train_data['existence_labels']
 
-        # 创建数据加载器，直接加载正样本对的索引
-        dataset = TensorDataset(drug_indices, disease_indices)
-        dataloader = DataLoader(dataset, batch_size=self.config['training']['batch_size'], shuffle=True)
+        # 筛选出所有正样本
+        positive_mask_all = (all_existence_labels == 1)
+        positive_head_indices_all = all_head_indices[positive_mask_all]
+        positive_tail_indices_all = all_tail_indices[positive_mask_all]
 
-        for batch_idx, (batch_drug_indices, batch_disease_indices) in enumerate(dataloader):
+        # 获取唯一的药物和疾病节点
+        unique_drug_indices = torch.unique(positive_head_indices_all)
+        unique_disease_indices = torch.unique(positive_tail_indices_all)
+
+        # 创建从全局索引到局部索引的映射
+        drug_map = {idx.item(): i for i, idx in enumerate(unique_drug_indices)}
+        disease_map = {idx.item(): i for i, idx in enumerate(unique_disease_indices)}
+
+        # 构建完整的 positive_mask 矩阵 [N_unique_drugs, N_unique_diseases]
+        positive_mask = torch.zeros(len(unique_drug_indices), len(unique_disease_indices), dtype=torch.bool,
+                                    device=self.device)
+
+        # 填充 positive_mask
+        for i in range(positive_head_indices_all.size(0)):
+            drug_global_idx = positive_head_indices_all[i].item()
+            disease_global_idx = positive_tail_indices_all[i].item()
+            drug_local_idx = drug_map[drug_global_idx]
+            disease_local_idx = disease_map[disease_global_idx]
+            positive_mask[drug_local_idx, disease_local_idx] = True
+
+        # 创建数据加载器，用于分批处理
+        # 我们按药物或疾病分批，这里按药物分批
+        drug_dataset = TensorDataset(unique_drug_indices)
+        drug_dataloader = DataLoader(drug_dataset, batch_size=self.config['training']['batch_size'], shuffle=True)
+
+        for batch_idx, (batch_drug_indices,) in enumerate(drug_dataloader):
             self.optimizer.zero_grad()
 
-            # 编码所有节点 (这是计算密集型操作，但保证了全局信息)
+            # 编码所有节点
             node_indices = torch.arange(self.num_nodes, device=self.device)
             node_embeddings = self.model.encoder(
                 node_indices, self.full_edge_index, self.full_edge_type
             )
 
-            # 从所有节点嵌入中，提取当前批次的药物和疾病嵌入
-            batch_drug_emb = node_embeddings[batch_drug_indices]  # [batch_size, hidden_dim]
-            batch_disease_emb = node_embeddings[batch_disease_indices]  # [batch_size, hidden_dim]
+            # 提取当前批次药物的嵌入
+            batch_drug_emb = node_embeddings[batch_drug_indices]  # [batch_size, D]
 
-            # 计算 CLIP 损失
-            # clip_loss 函数会自动对嵌入进行L2归一化，并计算对称交叉熵损失
+            # 提取所有疾病的嵌入 (也可以考虑分批处理疾病以节省内存)
+            all_disease_emb = node_embeddings[unique_disease_indices]  # [M, D]
+
+            # 构建当前批次的 positive_mask [batch_size, M]
+            batch_drug_global_indices = batch_drug_indices.cpu().numpy()
+            batch_positive_mask = torch.zeros(batch_drug_emb.size(0), all_disease_emb.size(0), dtype=torch.bool,
+                                              device=self.device)
+            for i, drug_global_idx in enumerate(batch_drug_global_indices):
+                drug_local_idx = drug_map[drug_global_idx]
+                batch_positive_mask[i, :] = positive_mask[drug_local_idx, :]
+
+            # 计算多标签 CLIP 损失
             total_batch_loss = clip_loss(
                 batch_drug_emb,
-                batch_disease_emb,
+                all_disease_emb,
+                batch_positive_mask,
                 self.clip_temperature
             )
 
@@ -275,7 +313,7 @@ class Trainer:
             # 记录日志
             if batch_idx % self.config['logging']['log_interval'] == 0:
                 self.logger.info(
-                    f'Batch {batch_idx}/{len(dataloader)}, CLIP Loss: {total_batch_loss.item():.4f}'
+                    f'Batch {batch_idx}/{len(drug_dataloader)}, MultiLabel CLIP Loss: {total_batch_loss.item():.4f}'
                 )
 
         return total_loss / num_batches if num_batches > 0 else float('inf')
@@ -302,22 +340,48 @@ class Trainer:
 
             # 计算损失
             if self.loss_type == 'clip':
-                # 使用CLIP损失 (只使用正样本)
-                positive_mask = (data['existence_labels'] == 1)
-                positive_head_indices = data['edge_index'][0][positive_mask]
-                positive_tail_indices = data['edge_index'][1][positive_mask]
-                
-                # 检查是否有正样本
-                if positive_head_indices.numel() > 0:
-                    drug_emb = node_embeddings[positive_head_indices]
-                    disease_emb = node_embeddings[positive_tail_indices]
-                    total_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
-                else:
-                    # 如果没有正样本，创建一个占位损失
+                # 使用多标签CLIP损失进行评估
+                # 获取数据中所有的药物和疾病索引
+                all_head_indices = data['edge_index'][0]
+                all_tail_indices = data['edge_index'][1]
+                all_existence_labels = data['existence_labels']
+
+                # 筛选出所有正样本
+                positive_mask_all = (all_existence_labels == 1)
+                positive_head_indices_all = all_head_indices[positive_mask_all]
+                positive_tail_indices_all = all_tail_indices[positive_mask_all]
+
+                # 获取唯一的药物和疾病节点
+                unique_drug_indices = torch.unique(positive_head_indices_all)
+                unique_disease_indices = torch.unique(positive_tail_indices_all)
+
+                if len(unique_drug_indices) == 0 or len(unique_disease_indices) == 0:
                     total_loss = torch.tensor(0.0, device=self.device)
-                
-                existence_loss = torch.tensor(0.0, device=self.device)  # CLIP模式下不计算existence_loss
-                relation_loss = torch.tensor(0.0, device=self.device)  # CLIP模式下不计算relation_loss
+                else:
+                    # 创建映射
+                    drug_map = {idx.item(): i for i, idx in enumerate(unique_drug_indices)}
+                    disease_map = {idx.item(): i for i, idx in enumerate(unique_disease_indices)}
+
+                    # 构建 positive_mask 矩阵
+                    positive_mask = torch.zeros(len(unique_drug_indices), len(unique_disease_indices), dtype=torch.bool,
+                                                device=self.device)
+                    for i in range(positive_head_indices_all.size(0)):
+                        drug_global_idx = positive_head_indices_all[i].item()
+                        disease_global_idx = positive_tail_indices_all[i].item()
+                        if drug_global_idx in drug_map and disease_global_idx in disease_map:  # 防御性编程
+                            drug_local_idx = drug_map[drug_global_idx]
+                            disease_local_idx = disease_map[disease_global_idx]
+                            positive_mask[drug_local_idx, disease_local_idx] = True
+
+                    # 获取嵌入
+                    drug_emb = node_embeddings[unique_drug_indices]
+                    disease_emb = node_embeddings[unique_disease_indices]
+
+                    # 计算损失
+                    total_loss = clip_loss(drug_emb, disease_emb, positive_mask, self.clip_temperature)
+
+                existence_loss = torch.tensor(0.0, device=self.device)
+                relation_loss = torch.tensor(0.0, device=self.device)
             else:
                 # 使用原有的BCE+CE损失
                 existence_loss = self.existence_criterion(existence_scores, data['existence_labels'].float())

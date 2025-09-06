@@ -63,50 +63,44 @@ def get_device(device_config: str) -> torch.device:
 
 
 def clip_loss(
-    drug_embeddings: torch.Tensor,      # [N, D] - N个药物的嵌入
-    disease_embeddings: torch.Tensor,   # [M, D] - M个疾病的嵌入
-    temperature: float = 0.07           # Temperature parameter
+        drug_embeddings: torch.Tensor,  # [N, D] - N个唯一药物的嵌入
+        disease_embeddings: torch.Tensor,  # [M, D] - M个唯一疾病的嵌入
+        positive_mask: torch.Tensor,  # [N, M] - 布尔矩阵，True 表示是正样本对
+        temperature: float = 1.0
 ) -> torch.Tensor:
     """
-    计算 CLIP 风格的对称对比损失 (InfoNCE)。
-    假设 drug_embeddings 和 disease_embeddings 是成对对齐的，
-    即 drug_embeddings[i] 与 disease_embeddings[i] 是正样本对。
+    多标签版本的 CLIP 损失。
+    positive_mask[i][j] = True 表示 第i个药物 和 第j个疾病 是正样本关系。
     """
     device = drug_embeddings.device
 
     # 1. L2 归一化嵌入
-    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)      # [N, D]
-    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1) # [M, D]
+    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
+    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
     # 2. 计算 logits: cosine similarity scaled by temperature
-    # logits[i][j] 表示第 i 个药物和第 j 个疾病的相似度
     logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
 
-    # --- 添加调试信息 ---
-    # 打印 logits 的统计信息
-    print(f"[Debug CLIP Loss] Logits shape: {logits.shape}")
-    print(f"[Debug CLIP Loss] Logits mean: {logits.mean().item():.4f}")
-    print(f"[Debug CLIP Loss] Logits std: {logits.std().item():.4f}")
-    print(f"[Debug CLIP Loss] Logits min: {logits.min().item():.4f}")
-    print(f"[Debug CLIP Loss] Logits max: {logits.max().item():.4f}")
+    # --- 调试信息 (可选，用于监控) ---
+    print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
     # --- 调试信息结束 ---
 
-    # 3. 真实标签：假设输入是 N 对正样本，所以匹配对是 (0,0), (1,1), ..., (N-1,N-1)
-    if drug_embeddings.shape[0] != disease_embeddings.shape[0]:
-        raise ValueError("Drug and disease embeddings must be paired and of equal length for this CLIP loss.")
-    batch_size = drug_embeddings.shape[0]
-    labels = torch.arange(batch_size, device=device) # [N]
+    # 3. 创建标签 (直接使用 positive_mask)
+    labels_drug_to_disease = positive_mask.float()  # [N, M]
+    labels_disease_to_drug = positive_mask.t().float()  # [M, N]
 
-    # 4. 计算两个方向的损失
-    # 4a. 药物到疾病的损失 (对每行进行 CE)
-    loss_drug_to_disease = F.cross_entropy(logits, labels)
-    # 4b. 疾病到药物的损失 (对每列进行 CE, 通过对 logits 转置实现)
-    loss_disease_to_drug = F.cross_entropy(logits.t(), labels)
+    # 4. 计算损失 (使用二元交叉熵，支持多标签)
+    bce_loss = nn.BCEWithLogitsLoss()
 
-    # 5. 返回对称损失
+    loss_drug_to_disease = bce_loss(logits, labels_drug_to_disease)
+    loss_disease_to_drug = bce_loss(logits.t(), labels_disease_to_drug)
+
     total_loss = (loss_drug_to_disease + loss_disease_to_drug) / 2.0
     return total_loss
-
 
 def create_negative_samples(
     positive_edges: torch.Tensor,
