@@ -158,16 +158,27 @@ class ModelEvaluator:
         with torch.no_grad():
             # 编码所有节点
             node_indices = torch.arange(self.num_nodes, device=self.device)
-            node_embeddings = self.model.encode(
-                node_indices, self.full_edge_index, self.full_edge_type
-            )
+            # node_embeddings = self.model.encode(
+            #     node_indices, self.full_edge_index, self.full_edge_type
+            # )
             
-            # 多任务预测
-            existence_scores, relation_logits = self.model.predict_links(
-                node_embeddings,
+            # # 多任务预测
+            # existence_scores, relation_logits = self.model.predict_links(
+            #     node_embeddings,
+            #     self.test_data['edge_index'][0],
+            #     self.test_data['edge_index'][1]
+            # )
+            # 直接调用模型的 forward 方法进行预测
+            existence_scores = self.model(
+                torch.arange(self.num_nodes, device=self.device),
+                self.full_edge_index,
+                self.full_edge_type,
                 self.test_data['edge_index'][0],
                 self.test_data['edge_index'][1]
             )
+            
+            # 由于新模型没有 relation_logits，我们将其设为一个占位符
+            relation_logits = torch.zeros_like(existence_scores.unsqueeze(-1)).expand(-1, self.num_relations)
 
             # 关系存在性评估
             existence_y_true = self.test_data['existence_labels'].cpu().numpy()
@@ -180,20 +191,20 @@ class ModelEvaluator:
                 self.config['evaluation']['k_values']
             )
 
-            # 关系类型评估（只对正样本）
-            positive_mask = self.test_data['existence_labels'] == 1
-            if positive_mask.sum() > 0:
-                relation_y_true = self.test_data['relation_labels'][positive_mask].cpu().numpy()
-                relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
-                relation_accuracy = (relation_y_true == relation_y_pred).mean()
-            else:
-                relation_accuracy = 0.0
+            # # 关系类型评估（只对正样本）
+            # positive_mask = self.test_data['existence_labels'] == 1
+            # if positive_mask.sum() > 0:
+            #     relation_y_true = self.test_data['relation_labels'][positive_mask].cpu().numpy()
+            #     relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
+            #     relation_accuracy = (relation_y_true == relation_y_pred).mean()
+            # else:
+            #     relation_accuracy = 0.0
 
             # 合并指标
             metrics = {}
             for key, value in existence_metrics.items():
                 metrics[f'existence_{key}'] = value
-            metrics['relation_accuracy'] = relation_accuracy
+            # metrics['relation_accuracy'] = relation_accuracy
             
             # 计算MRR指标（如果在Cross-Disease模式下）
             evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
@@ -370,7 +381,8 @@ def main():
     print("="*50)
     
     for metric, value in metrics.items():
-        print(f"{metric}: {value:.4f}")
+        if "relation_accuracy" not in metric: # 只打印非关系类型准确率的指标
+            print(f"{metric}: {value:.4f}")
     
     # 详细分析
     evaluator.detailed_analysis(y_true, y_pred, y_score)

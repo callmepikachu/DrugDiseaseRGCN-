@@ -55,7 +55,7 @@ class Trainer:
         # 多任务损失函数 (仅在使用bce_ce时使用)
         if self.loss_type == 'bce_ce':
             self.existence_criterion = nn.BCEWithLogitsLoss()  # 关系存在性
-            self.relation_criterion = nn.CrossEntropyLoss(ignore_index=-1)  # 关系类型，忽略负样本
+            # self.relation_criterion = nn.CrossEntropyLoss(ignore_index=-1)  # 关系类型，忽略负样本
         
         # 早停
         self.early_stopping = EarlyStopping(
@@ -226,51 +226,91 @@ class Trainer:
         for batch_idx, (head_indices, tail_indices, existence_labels, relation_labels) in enumerate(dataloader):
             self.optimizer.zero_grad()
 
-            # 编码所有节点 (在模型训练模式下，并启用梯度追踪)
-            # 注意：这会增加内存消耗，因为需要存储所有节点嵌入的计算图
-            # 一种更节省内存的方法是，在每个 batch 内只编码涉及的节点，但这需要更复杂的 dataloader 和模型设计。
-            # 当前实现为了简单起见，先采用编码所有节点的方式。
-            node_indices = torch.arange(self.num_nodes, device=self.device)
-            # 确保 full_edge_index 和 full_edge_type 在正确的设备上并且需要梯度（如果它们是模型参数的一部分，通常是的）
-            # 但在这里，它们更像是输入数据，不需要梯度。模型参数的梯度会在 encode 内部被追踪。
-            node_embeddings = self.model.encode(
-                node_indices, self.full_edge_index, self.full_edge_type
-            )
-            # 现在 node_embeddings 是通过模型计算得出的，并且启用了梯度追踪 (假设模型参数 requires_grad=True)
+            # # 编码所有节点 (在模型训练模式下，并启用梯度追踪)
+            # # 注意：这会增加内存消耗，因为需要存储所有节点嵌入的计算图
+            # # 一种更节省内存的方法是，在每个 batch 内只编码涉及的节点，但这需要更复杂的 dataloader 和模型设计。
+            # # 当前实现为了简单起见，先采用编码所有节点的方式。
+            # node_indices = torch.arange(self.num_nodes, device=self.device)
+            # # 确保 full_edge_index 和 full_edge_type 在正确的设备上并且需要梯度（如果它们是模型参数的一部分，通常是的）
+            # # 但在这里，它们更像是输入数据，不需要梯度。模型参数的梯度会在 encode 内部被追踪。
+            # node_embeddings = self.model.encode(
+            #     node_indices, self.full_edge_index, self.full_edge_type
+            # )
+            # # 现在 node_embeddings 是通过模型计算得出的，并且启用了梯度追踪 (假设模型参数 requires_grad=True)
 
-            # --- 关键修改：根据损失类型筛选输入数据 ---
+            # # --- 关键修改：根据损失类型筛选输入数据 ---
+            # if self.loss_type == 'clip':
+            #     # 1. 筛选出正样本 (existence_labels == 1)
+            #     positive_mask = (existence_labels == 1)
+            #     # 2. 只取正样本的索引和标签用于 CLIP 损失计算
+            #     # 注意：如果一个 batch 全是负样本，positive_head_indices 会是空的，需要处理
+            #     positive_head_indices = head_indices[positive_mask]
+            #     positive_tail_indices = tail_indices[positive_mask]
+                
+            #     # 如果当前 batch 没有正样本，则跳过损失计算和反向传播
+            #     if positive_head_indices.numel() == 0: 
+            #          # 或者可以创建一个很小的占位损失，例如: total_batch_loss = 0 * node_embeddings.sum()
+            #          # 这里选择跳过
+            #          self.logger.warning(f"Batch {batch_idx} contains no positive samples for CLIP loss, skipping.")
+            #          continue
+
+            #     # 3. 使用正样本索引获取嵌入
+            #     drug_emb = node_embeddings[positive_head_indices]   # [num_positives_in_batch, D]
+            #     disease_emb = node_embeddings[positive_tail_indices] # [num_positives_in_batch, D]
+                
+            #     # 4. 计算 CLIP 损失 (现在输入确实是成对的正样本)
+            #     total_batch_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
+                
+            # else: # BCE+CE
+            #     # 前向传播 (使用所有样本)
+            #     existence_scores, relation_logits = self.model.predict_links(
+            #         node_embeddings, head_indices, tail_indices
+            #     )
+            # --- 关键修改：直接调用 forward 方法 ---
             if self.loss_type == 'clip':
                 # 1. 筛选出正样本 (existence_labels == 1)
                 positive_mask = (existence_labels == 1)
-                # 2. 只取正样本的索引和标签用于 CLIP 损失计算
-                # 注意：如果一个 batch 全是负样本，positive_head_indices 会是空的，需要处理
                 positive_head_indices = head_indices[positive_mask]
                 positive_tail_indices = tail_indices[positive_mask]
                 
-                # 如果当前 batch 没有正样本，则跳过损失计算和反向传播
+                # 如果当前 batch 没有正样本，则跳过
                 if positive_head_indices.numel() == 0: 
-                     # 或者可以创建一个很小的占位损失，例如: total_batch_loss = 0 * node_embeddings.sum()
-                     # 这里选择跳过
-                     self.logger.warning(f"Batch {batch_idx} contains no positive samples for CLIP loss, skipping.")
-                     continue
-
-                # 3. 使用正样本索引获取嵌入
-                drug_emb = node_embeddings[positive_head_indices]   # [num_positives_in_batch, D]
-                disease_emb = node_embeddings[positive_tail_indices] # [num_positives_in_batch, D]
+                    self.logger.warning(f"Batch {batch_idx} contains no positive samples for CLIP loss, skipping. ")
+                    continue
+            
+                # 2. 直接调用模型的 forward 方法，传入正样本的头尾索引
+                # 注意：forward 方法现在只返回 existence_scores，但我们不需要它，因为我们直接用嵌入计算 Clip Loss
+                # 我们需要修改模型，让 forward 方法在 clip 模式下也返回节点嵌入，或者这里直接调用 encoder。
                 
-                # 4. 计算 CLIP 损失 (现在输入确实是成对的正样本)
+                # 临时解决方案：直接调用模型的 encoder
+                node_indices = torch.arange(self.num_nodes, device=self.device)
+                node_embeddings = self.model.encoder(
+                    node_indices, self.full_edge_index, self.full_edge_type
+                )
+                
+                # 3. 使用正样本索引获取嵌入
+                drug_emb = node_embeddings[positive_head_indices]
+                disease_emb = node_embeddings[positive_tail_indices]
+                
+                # 4. 计算 CLIP 损失
                 total_batch_loss = clip_loss(drug_emb, disease_emb, self.clip_temperature)
                 
-            else: # BCE+CE
+            else: # BCE+CE (虽然你不用，但保留兼容性)
                 # 前向传播 (使用所有样本)
-                existence_scores, relation_logits = self.model.predict_links(
-                    node_embeddings, head_indices, tail_indices
+                existence_scores = self.model(
+                    torch.arange(self.num_nodes, device=self.device),
+                    self.full_edge_index,
+                    self.full_edge_type,
+                    head_indices,
+                    tail_indices
                 )
+                # 由于新模型只返回 existence_scores，我们不需要 relation_logits
+                existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
+                total_batch_loss = existence_loss
                 # 使用原有的BCE+CE损失
                 existence_loss = self.existence_criterion(existence_scores, existence_labels.float())
-                relation_loss = self.relation_criterion(relation_logits, relation_labels)
-                total_batch_loss = existence_loss + relation_loss
-
+                total_batch_loss = existence_loss # 只有 existence_loss
+                
             # 反向传播 (现在 total_batch_loss 是基于正确输入计算的)
             total_batch_loss.backward()
             
@@ -297,9 +337,8 @@ class Trainer:
                     relation_loss_val = relation_loss.item() if 'relation_loss' in locals() else 0
                     self.logger.info(
                         f'Batch {batch_idx}/{len(dataloader)}, Total Loss: {total_batch_loss.item():.4f}, '
-                        f'Existence Loss: {existence_loss_val:.4f}, Relation Loss: {relation_loss_val:.4f}'
-                    )
-        
+                        f'Existence Loss: {existence_loss.item():.4f}'
+                    )        
         # 避免除零错误
         if num_batches == 0:
             self.logger.warning("No batches processed in this epoch.")
@@ -319,11 +358,14 @@ class Trainer:
             )
             
             # 预测
-            existence_scores, relation_logits = self.model.predict_links(
+            existence_scores = self.model.predict_links(
                 node_embeddings,
                 data['edge_index'][0],
                 data['edge_index'][1]
             )
+            # 由于新模型没有 relation_logits，我们创建一个占位符
+            # 这样可以避免后续代码报错，因为后续代码会检查 positive_mask
+            relation_logits = torch.zeros((existence_scores.size(0), self.num_relations), device=self.device)
 
             # 计算损失
             if self.loss_type == 'clip':
@@ -360,20 +402,20 @@ class Trainer:
                 self.config['evaluation']['k_values']
             )
 
-            # 关系类型评估（只对正样本）
-            positive_mask = data['existence_labels'] == 1
-            if positive_mask.sum() > 0:
-                relation_y_true = data['relation_labels'][positive_mask].cpu().numpy()
-                relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
-                relation_accuracy = (relation_y_true == relation_y_pred).mean()
-            else:
-                relation_accuracy = 0.0
+            # # 关系类型评估（只对正样本）
+            # positive_mask = data['existence_labels'] == 1
+            # if positive_mask.sum() > 0:
+            #     relation_y_true = data['relation_labels'][positive_mask].cpu().numpy()
+            #     relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
+            #     relation_accuracy = (relation_y_true == relation_y_pred).mean()
+            # else:
+            #     relation_accuracy = 0.0
 
             # 合并指标
             metrics = {}
             for key, value in existence_metrics.items():
                 metrics[f'existence_{key}'] = value
-            metrics['relation_accuracy'] = relation_accuracy
+            # metrics['relation_accuracy'] = relation_accuracy
             metrics['total_loss'] = total_loss.item()
             metrics['existence_loss'] = existence_loss.item()
             metrics['relation_loss'] = relation_loss.item()
@@ -398,7 +440,8 @@ class Trainer:
             self.logger.info(f"Train Loss: {train_loss:.4f}")
             self.logger.info(f"Val Total Loss: {val_metrics['total_loss']:.4f}, "
                            f"Existence AUC: {val_metrics['existence_auc']:.4f}, "
-                           f"Relation Acc: {val_metrics['relation_accuracy']:.4f}")
+                           # f"Relation Acc: {val_metrics['relation_accuracy']:.4f}"
+            )
 
             # 学习率调度
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
@@ -428,10 +471,10 @@ class Trainer:
         
         # 最终测试
         test_metrics = self.evaluate(self.test_data, "test")
-        self.logger.info("测试结果:")
-        for metric, value in test_metrics.items():
-            self.logger.info(f"{metric}: {value:.4f}")
-        
+        self.logger.info("测试结果: ")
+        for metric in ['existence_auc', 'existence_ap', 'existence_precision@10', 'existence_recall@10', 'total_loss']:
+            if metric in test_metrics:
+                self.logger.info(f"{metric}: {test_metrics[metric]:.4f}")        
         return test_metrics
 
 

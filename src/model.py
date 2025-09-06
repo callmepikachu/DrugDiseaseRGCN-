@@ -157,16 +157,65 @@ class MultiTaskLinkPredictor(nn.Module):
         return existence_scores, relation_type_logits
 
 
-class DrugDiseaseRGCN(nn.Module):
-    """药物-疾病关系预测RGCN模型"""
+class LinkPredictor(nn.Module):
+    """简化版链接预测器：只预测关系存在性"""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        dropout: float = 0.1
+    ):
+        super(LinkPredictor, self).__init__()
+
+        self.hidden_dim = hidden_dim
+
+        # 特征提取层
+        self.feature_layers = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim * 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1)  # 最后一层直接输出分数
+        )
+
+        self._init_parameters()
     
+    def _init_parameters(self):
+        for layer in self.feature_layers:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                nn.init.zeros_(layer.bias)
+
+    def forward(
+        self,
+        node_embeddings: torch.Tensor,
+        head_indices: torch.Tensor,
+        tail_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """前向传播
+
+        Returns:
+            torch.Tensor: existence_scores [batch_size]
+        """
+        head_emb = node_embeddings[head_indices]
+        tail_emb = node_embeddings[tail_indices]
+        combined = torch.cat([head_emb, tail_emb], dim=-1)
+        existence_scores = self.feature_layers(combined).squeeze(-1)
+
+        return existence_scores
+
+
+
+class DrugDiseaseRGCN(nn.Module):
     def __init__(
         self,
         num_nodes: int,
-        num_relations: int,
+        num_relations: int, # 这个参数可以保留，因为RGCN编码器还需要它
         hidden_dim: int = 128,
         num_layers: int = 2,
-        dropout: float = 0.1,
+        dropout: float = 0.1, 
         num_bases: Optional[int] = None,
         num_blocks: Optional[int] = None
     ):
@@ -176,7 +225,7 @@ class DrugDiseaseRGCN(nn.Module):
         self.num_relations = num_relations
         self.hidden_dim = hidden_dim
         
-        # RGCN编码器
+        # RGCN编码器 (保持不变)
         self.encoder = RGCNEncoder(
             num_nodes=num_nodes,
             num_relations=num_relations,
@@ -187,10 +236,9 @@ class DrugDiseaseRGCN(nn.Module):
             num_blocks=num_blocks
         )
         
-        # 多任务链接预测器
-        self.link_predictor = MultiTaskLinkPredictor(
+        # 简化版链接预测器 (只预测存在性)
+        self.link_predictor = LinkPredictor(
             hidden_dim=hidden_dim,
-            num_relations=num_relations,
             dropout=dropout
         )
     
@@ -201,45 +249,29 @@ class DrugDiseaseRGCN(nn.Module):
         edge_type: torch.Tensor,
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
-    ) -> tuple:
-        """前向传播
-
-        Returns:
-            tuple: (existence_scores, relation_type_logits)
-        """
-        # 编码节点
+    ) -> torch.Tensor: # 返回值类型改为 torch.Tensor
         node_embeddings = self.encoder(x, edge_index, edge_type)
-
-        # 多任务预测
-        existence_scores, relation_type_logits = self.link_predictor(
+        existence_scores = self.link_predictor(
             node_embeddings,
             head_indices,
             tail_indices
         )
-
-        return existence_scores, relation_type_logits
-    
-    def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
-        """编码节点"""
-        return self.encoder(x, edge_index, edge_type)
+        return existence_scores # 只返回一个值
     
     def predict_links(
         self,
         node_embeddings: torch.Tensor,
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
-    ) -> tuple:
-        """预测链接
-
-        Returns:
-            tuple: (existence_scores, relation_type_logits)
-        """
+    ) -> torch.Tensor: # 返回值类型改为 torch.Tensor
         return self.link_predictor(
             node_embeddings,
             head_indices,
             tail_indices
         )
-
+    def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
+        """编码节点"""
+        return self.encoder(x, edge_index, edge_type)
 
 class DistMultDecoder(nn.Module):
     """DistMult解码器（替代方案）"""

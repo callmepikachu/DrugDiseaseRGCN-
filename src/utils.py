@@ -80,7 +80,9 @@ def clip_loss(
 
     # 2. 计算 logits: cosine similarity scaled by temperature
     # logits[i][j] 表示第 i 个药物和第 j 个疾病的相似度
-    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
+    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
+    logits = torch.clamp(logits, min=-50.0, max=50.0) # 防止梯度爆炸
+    
     # --- 添加调试信息 ---
     # 打印 logits 的统计信息
     print(f"[Debug CLIP Loss] Logits shape: {logits.shape}")

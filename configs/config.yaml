@@ -40,14 +40,13 @@ training:
 
 # 评估配置
 evaluation:
+  mode: "cross_disease" # 添加或修改这一行
   metrics:
     - "auc"
-    - "ap"  # average precision
+    - "ap"
     - "precision_at_k"
     - "recall_at_k"
   k_values: [10, 50, 100]
-  mode: "cross_disease"  # 或 "standard"
-
 # 设备配置
 device: "auto"  # cuda, cpu, auto
 
