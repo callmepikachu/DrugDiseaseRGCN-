@@ -17,7 +17,7 @@ from model import DrugDiseaseRGCN
 from utils import (
     set_seed, load_config, setup_logging, get_device,
     split_edges, split_edges_cross_disease, prepare_multitask_data, calculate_metrics,
-    save_model, print_model_info, EarlyStopping, clip_loss, NegativeSampler
+    save_model, print_model_info, EarlyStopping, clip_loss, NegativeSampler, calculate_mrr
 )
 
 
@@ -317,17 +317,18 @@ class Trainer:
                 )
 
         return total_loss / num_batches if num_batches > 0 else float('inf')
+
     def evaluate(self, data, split_name="val"):
         """评估模型"""
         self.model.eval()
-        
+
         with torch.no_grad():
             # 编码所有节点
             node_indices = torch.arange(self.num_nodes, device=self.device)
             node_embeddings = self.model.encode(
                 node_indices, self.full_edge_index, self.full_edge_type
             )
-            
+
             # 预测
             existence_scores = self.model.predict_links(
                 node_embeddings,
@@ -399,57 +400,89 @@ class Trainer:
                 self.config['evaluation']['k_values']
             )
 
-            # # 关系类型评估（只对正样本）
-            # positive_mask = data['existence_labels'] == 1
-            # if positive_mask.sum() > 0:
-            #     relation_y_true = data['relation_labels'][positive_mask].cpu().numpy()
-            #     relation_y_pred = torch.argmax(relation_logits[positive_mask], dim=1).cpu().numpy()
-            #     relation_accuracy = (relation_y_true == relation_y_pred).mean()
-            # else:
-            #     relation_accuracy = 0.0
+            # --- 新增代码：计算 MRR 指标 ---
+            # 获取评估模式
+            evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
+            mrr_metrics = {}
+            if evaluation_mode == 'cross_disease':
+                try:
+                    mrr_by_drug = calculate_mrr(
+                        node_embeddings,
+                        data['edge_index'],
+                        data['existence_labels'],
+                        self.mappings,
+                        target_entity="drug"
+                    )
+                    mrr_by_disease = calculate_mrr(
+                        node_embeddings,
+                        data['edge_index'],
+                        data['existence_labels'],
+                        self.mappings,
+                        target_entity="disease"
+                    )
+                    mrr_metrics['mrr_by_drug'] = mrr_by_drug
+                    mrr_metrics['mrr_by_disease'] = mrr_by_disease
+                except Exception as e:
+                    self.logger.warning(f"计算 MRR 时出错: {e}")
+                    mrr_metrics['mrr_by_drug'] = 0.0
+                    mrr_metrics['mrr_by_disease'] = 0.0
+            else:
+                # 在标准模式下，也可以计算 MRR，但意义可能不如 cross_disease 模式大
+                mrr_metrics['mrr_by_drug'] = 0.0
+                mrr_metrics['mrr_by_disease'] = 0.0
+            # --- 新增代码结束 ---
 
             # 合并指标
             metrics = {}
             for key, value in existence_metrics.items():
                 metrics[f'existence_{key}'] = value
-            # metrics['relation_accuracy'] = relation_accuracy
+            # 将 MRR 指标加入 metrics 字典
+            for key, value in mrr_metrics.items():
+                metrics[key] = value
+
             metrics['total_loss'] = total_loss.item()
             metrics['existence_loss'] = existence_loss.item()
             metrics['relation_loss'] = relation_loss.item()
-        
+
         return metrics
-    
+
     def train(self):
         """训练模型"""
         self.logger.info("开始训练...")
-        
-        best_val_auc = 0
-        
+
+        # --- 修改：将 best_val_auc 改为 best_val_mrr ---
+        # best_val_auc = 0
+        best_val_mrr = 0  # 使用 MRR 作为核心指标
+
         for epoch in range(self.config['training']['num_epochs']):
-            self.logger.info(f"Epoch {epoch+1}/{self.config['training']['num_epochs']}")
-            
+            self.logger.info(f"Epoch {epoch + 1}/{self.config['training']['num_epochs']}")
+
             # 训练
             train_loss = self.train_epoch()
-            
+
             # 验证
             val_metrics = self.evaluate(self.val_data, "val")
-            
+
             self.logger.info(f"Train Loss: {train_loss:.4f}")
             self.logger.info(f"Val Total Loss: {val_metrics['total_loss']:.4f}, "
-                           f"Existence AUC: {val_metrics['existence_auc']:.4f}, "
-                           # f"Relation Acc: {val_metrics['relation_accuracy']:.4f}"
-            )
+                             f"Existence AUC: {val_metrics['existence_auc']:.4f}, ")
+            # --- 新增：记录 MRR ---
+            self.logger.info(f"Val MRR by Drug: {val_metrics.get('mrr_by_drug', 0.0):.4f}, "
+                             f"Val MRR by Disease: {val_metrics.get('mrr_by_disease', 0.0):.4f}")
+            # --- 新增结束 ---
 
-            # 学习率调度
+            # 学习率调度 (保持不变，通常还是基于 AUC)
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 self.scheduler.step(val_metrics['existence_auc'])
             else:
                 self.scheduler.step()
 
-            # 保存最佳模型（基于关系存在性AUC）
-            if val_metrics['existence_auc'] > best_val_auc:
-                best_val_auc = val_metrics['existence_auc']
-                
+            # --- 修改：保存最佳模型（基于 MRR）---
+            # if val_metrics['existence_auc'] > best_val_auc:
+            current_mrr = val_metrics.get('mrr_by_drug', 0.0)  # 或者使用 (mrr_by_drug + mrr_by_disease) / 2
+            if current_mrr > best_val_mrr:
+                best_val_mrr = current_mrr
+
                 if self.config['logging']['save_model']:
                     save_path = os.path.join(
                         self.config['logging']['model_dir'],
@@ -459,19 +492,22 @@ class Trainer:
                         self.model, self.optimizer, epoch,
                         val_metrics['total_loss'], val_metrics, save_path
                     )
-                    self.logger.info(f"保存最佳模型到: {save_path}")
-            
-            # 早停检查
-            if self.early_stopping(val_metrics['existence_auc'], self.model):
-                self.logger.info(f"早停在epoch {epoch+1}")
+                    self.logger.info(f"保存最佳模型到: {save_path} (MRR: {best_val_mrr:.4f})")
+            # --- 修改结束 ---
+
+            # --- 修改：早停检查（基于 MRR）---
+            # if self.early_stopping(val_metrics['existence_auc'], self.model):
+            if self.early_stopping(current_mrr, self.model):
+                self.logger.info(f"早停在epoch {epoch + 1} (基于 MRR)")
                 break
-        
+            # --- 修改结束 ---
+
         # 最终测试
         test_metrics = self.evaluate(self.test_data, "test")
         self.logger.info("测试结果: ")
-        for metric in ['existence_auc', 'existence_ap', 'existence_precision@10', 'existence_recall@10', 'total_loss']:
+        for metric in ['existence_auc', 'existence_ap', 'mrr_by_drug', 'mrr_by_disease', 'total_loss']:
             if metric in test_metrics:
-                self.logger.info(f"{metric}: {test_metrics[metric]:.4f}")        
+                self.logger.info(f"{metric}: {test_metrics[metric]:.4f}")
         return test_metrics
 
 
