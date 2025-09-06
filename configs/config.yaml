@@ -11,7 +11,7 @@ data:
 
 # 模型配置
 model:
-  hidden_dim: 64
+  hidden_dim: 128
   num_layers: 2
   dropout: 0.1
   num_bases: null  # 如果为null，则不使用basis decomposition
@@ -36,7 +36,7 @@ training:
   # 损失函数配置
   loss:
     type: "clip" # "clip" # 或 "bce_ce" (用于回退测试)
-    clip_temperature: 0.5
+    clip_temperature: 0.1
 
 # 评估配置
 evaluation:
