@@ -67,7 +67,9 @@ class Trainer:
         
         # 初始化负样本数据
         self.negative_df = None
-    
+        # 初始化正样本对属性
+        self.train_positive_pairs = None
+
     def load_data(self):
         """加载数据"""
         self.logger.info("正在加载数据...")
@@ -139,6 +141,23 @@ class Trainer:
         self.train_data = self._prepare_data_for_training(train_data, all_positive_edges)
         self.val_data = self._prepare_data_for_training(val_data, all_positive_edges)
         self.test_data = self._prepare_data_for_training(test_data, all_positive_edges)
+        # --- 新增代码：为CLIP训练准备正样本对 ---
+        if self.loss_type == 'clip':
+            # 从训练数据中筛选出正样本 (existence_labels == 1)
+            # 注意：self.train_data['existence_labels'] 包含了正负样本，1为正，0为负
+            train_positive_mask = self.train_data['existence_labels'] == 1
+            # 提取对应的头节点（药物）和尾节点（疾病）索引
+            train_positive_head_indices = self.train_data['edge_index'][0][train_positive_mask]
+            train_positive_tail_indices = self.train_data['edge_index'][1][train_positive_mask]
+
+            # 将其存储为一个元组，供 train_epoch 使用
+            self.train_positive_pairs = (train_positive_head_indices, train_positive_tail_indices)
+
+            self.logger.info(f"为CLIP训练准备的正样本对数量: {len(train_positive_head_indices)}")
+        else:
+            # 如果不是CLIP模式，可以置为None或不做处理
+            self.train_positive_pairs = None
+        # --- 新增代码结束 ---
         
         # 创建完整图用于编码
         self.full_edge_index = edge_index.to(self.device)
