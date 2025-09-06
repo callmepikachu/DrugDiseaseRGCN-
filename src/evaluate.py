@@ -148,26 +148,29 @@ class ModelEvaluator:
             print("训练时的最佳指标:")
             for metric, value in metrics.items():
                 print(f"  {metric}: {value:.4f}")
-    
+
     def evaluate(self):
         """评估模型"""
         print("正在评估模型...")
-        
+
         self.model.eval()
-        
+
         with torch.no_grad():
+            # --- 关键修改：取消注释，获取节点嵌入 ---
             # 编码所有节点
             node_indices = torch.arange(self.num_nodes, device=self.device)
-            # node_embeddings = self.model.encode(
-            #     node_indices, self.full_edge_index, self.full_edge_type
-            # )
-            
-            # # 多任务预测
+            node_embeddings = self.model.encode(
+                node_indices, self.full_edge_index, self.full_edge_type
+            )
+            # --- 关键修改结束 ---
+
+            # # 多任务预测 (旧代码，已注释)
             # existence_scores, relation_logits = self.model.predict_links(
             #     node_embeddings,
             #     self.test_data['edge_index'][0],
             #     self.test_data['edge_index'][1]
             # )
+
             # 直接调用模型的 forward 方法进行预测
             existence_scores = self.model(
                 torch.arange(self.num_nodes, device=self.device),
@@ -176,7 +179,7 @@ class ModelEvaluator:
                 self.test_data['edge_index'][0],
                 self.test_data['edge_index'][1]
             )
-            
+
             # 由于新模型没有 relation_logits，我们将其设为一个占位符
             relation_logits = torch.zeros_like(existence_scores.unsqueeze(-1)).expand(-1, self.num_relations)
 
@@ -191,7 +194,7 @@ class ModelEvaluator:
                 self.config['evaluation']['k_values']
             )
 
-            # # 关系类型评估（只对正样本）
+            # # 关系类型评估（只对正样本） (旧代码，已注释)
             # positive_mask = self.test_data['existence_labels'] == 1
             # if positive_mask.sum() > 0:
             #     relation_y_true = self.test_data['relation_labels'][positive_mask].cpu().numpy()
@@ -205,27 +208,27 @@ class ModelEvaluator:
             for key, value in existence_metrics.items():
                 metrics[f'existence_{key}'] = value
             # metrics['relation_accuracy'] = relation_accuracy
-            
+
             # 计算MRR指标（如果在Cross-Disease模式下）
             evaluation_mode = self.config.get('evaluation', {}).get('mode', 'standard')
             if evaluation_mode == 'cross_disease':
                 mrr_by_drug = calculate_mrr(
-                    node_embeddings, 
-                    self.test_data['edge_index'], 
-                    self.test_data['existence_labels'], 
-                    self.mappings, 
+                    node_embeddings,
+                    self.test_data['edge_index'],
+                    self.test_data['existence_labels'],
+                    self.mappings,
                     target_entity="drug"
                 )
                 mrr_by_disease = calculate_mrr(
-                    node_embeddings, 
-                    self.test_data['edge_index'], 
-                    self.test_data['existence_labels'], 
-                    self.mappings, 
+                    node_embeddings,
+                    self.test_data['edge_index'],
+                    self.test_data['existence_labels'],
+                    self.mappings,
                     target_entity="disease"
                 )
                 metrics['mrr_by_drug'] = mrr_by_drug
                 metrics['mrr_by_disease'] = mrr_by_disease
-        
+
         return metrics, existence_y_true, existence_y_pred, existence_y_score
     
     def detailed_analysis(self, y_true, y_pred, y_score):
