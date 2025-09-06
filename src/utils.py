@@ -75,9 +75,9 @@ def clip_loss(
     """
     device = drug_embeddings.device
 
-    # 1. L2 归一化嵌入
-    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
-    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
+    # # 1. L2 归一化嵌入
+    # drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
+    # disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
     # 2. 计算 logits: cosine similarity scaled by temperature
     logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
