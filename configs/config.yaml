@@ -36,7 +36,7 @@ training:
   # 损失函数配置
   loss:
     type: "clip" # "clip" # 或 "bce_ce" (用于回退测试)
-    clip_temperature: 0.1
+    clip_temperature: 2.0
 
 # 评估配置
 evaluation:
