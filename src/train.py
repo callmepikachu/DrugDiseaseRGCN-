@@ -292,7 +292,7 @@ class Trainer:
                 batch_drug_emb,
                 all_disease_emb,
                 batch_positive_mask,
-                model=self.model  # 传入模型以获取可学习温度
+                self.model  # 传入模型以获取可学习温度
             )
 
             # 反向传播
@@ -379,8 +379,12 @@ class Trainer:
                     disease_emb = node_embeddings[unique_disease_indices]
 
                     # 计算损失
-                    total_loss = clip_loss(drug_emb, disease_emb, positive_mask,  model=self.model)
-
+                    total_loss = clip_loss(
+                        drug_emb,
+                        disease_emb,
+                        positive_mask,
+                        self.model  # <-- 关键修改
+                    )
                 existence_loss = torch.tensor(0.0, device=self.device)
                 relation_loss = torch.tensor(0.0, device=self.device)
             else:

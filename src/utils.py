@@ -64,11 +64,10 @@ def get_device(device_config: str) -> torch.device:
 
 
 def clip_loss(
-        drug_embeddings: torch.Tensor,  # [N, D] - N个唯一药物的嵌入
-        disease_embeddings: torch.Tensor,  # [M, D] - M个唯一疾病的嵌入
-        positive_mask: torch.Tensor,  # [N, M] - 布尔矩阵，True 表示是正样本对
-        model: torch.nn.Module = None,  # 新增参数，传入模型
-        temperature: float = 1.0
+        drug_embeddings: torch.Tensor,  # [N, D]
+        disease_embeddings: torch.Tensor,  # [M, D]
+        positive_mask: torch.Tensor,  # [N, M]
+        temperature_or_model: Any = 1.0  # <-- 修改参数名，可以是 float 或 nn.Module
 ) -> torch.Tensor:
     """
     多标签版本的 CLIP 损失。
@@ -76,25 +75,28 @@ def clip_loss(
     """
     device = drug_embeddings.device
 
-    # # 1. L2 归一化嵌入
+    # 1. L2 归一化嵌入
     drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
     disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
-    # 使用模型内部的可学习温度
-    if model is not None and hasattr(model, 'logit_scale'):
-        temperature = model.logit_scale.exp() # 现在 temperature 是一个很大的值，但我们要用它做除法
+    # 2. 计算 logits: cosine similarity scaled by temperature
+    if isinstance(temperature_or_model, torch.nn.Module) and hasattr(temperature_or_model, 'logit_scale'):
+        # 使用可学习温度
+        temperature = temperature_or_model.logit_scale.exp()
         logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
+        debug_temp = temperature.item()
     else:
-        # 兜底方案，使用默认值或从配置读取
-        print("正在使用默认温度")
+        # 使用固定温度
+        temperature = float(temperature_or_model)
         logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
+        debug_temp = temperature
 
-
-    # --- 调试信息 (可选，用于监控) ---
-    if model is not None and hasattr(model, 'logit_scale'):
-        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Learned Temperature = {temperature}")
-    else:
-        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {temperature}")
+    # --- 调试信息 ---
+    print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {debug_temp:.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
     # --- 调试信息结束 ---
 
     # 3. 创建标签 (直接使用 positive_mask)
