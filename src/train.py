@@ -197,7 +197,7 @@ class Trainer:
         
         # 打印模型信息
         print_model_info(self.model)
-        
+        self.model.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07)).to(self.device)
         # 优化器
         self.optimizer = optim.Adam(
             self.model.parameters(),
@@ -292,7 +292,7 @@ class Trainer:
                 batch_drug_emb,
                 all_disease_emb,
                 batch_positive_mask,
-                self.clip_temperature
+                model=self.model  # 传入模型以获取可学习温度
             )
 
             # 反向传播
@@ -379,7 +379,7 @@ class Trainer:
                     disease_emb = node_embeddings[unique_disease_indices]
 
                     # 计算损失
-                    total_loss = clip_loss(drug_emb, disease_emb, positive_mask, self.clip_temperature)
+                    total_loss = clip_loss(drug_emb, disease_emb, positive_mask,  model=self.model)
 
                 existence_loss = torch.tensor(0.0, device=self.device)
                 relation_loss = torch.tensor(0.0, device=self.device)
@@ -450,8 +450,6 @@ class Trainer:
         """训练模型"""
         self.logger.info("开始训练...")
 
-        # --- 修改：将 best_val_auc 改为 best_val_mrr ---
-        # best_val_auc = 0
         best_val_mrr = 0  # 使用 MRR 作为核心指标
 
         for epoch in range(self.config['training']['num_epochs']):
@@ -466,10 +464,8 @@ class Trainer:
             self.logger.info(f"Train Loss: {train_loss:.4f}")
             self.logger.info(f"Val Total Loss: {val_metrics['total_loss']:.4f}, "
                              f"Existence AUC: {val_metrics['existence_auc']:.4f}, ")
-            # --- 新增：记录 MRR ---
             self.logger.info(f"Val MRR by Drug: {val_metrics.get('mrr_by_drug', 0.0):.4f}, "
                              f"Val MRR by Disease: {val_metrics.get('mrr_by_disease', 0.0):.4f}")
-            # --- 新增结束 ---
 
             # 学习率调度 (保持不变，通常还是基于 AUC)
             if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):

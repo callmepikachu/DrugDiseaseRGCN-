@@ -67,6 +67,7 @@ def clip_loss(
         drug_embeddings: torch.Tensor,  # [N, D] - N个唯一药物的嵌入
         disease_embeddings: torch.Tensor,  # [M, D] - M个唯一疾病的嵌入
         positive_mask: torch.Tensor,  # [N, M] - 布尔矩阵，True 表示是正样本对
+        model: torch.nn.Module = None,  # 新增参数，传入模型
         temperature: float = 1.0
 ) -> torch.Tensor:
     """
@@ -79,17 +80,21 @@ def clip_loss(
     drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
     disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
-    # 2. 计算 logits: cosine similarity scaled by temperature
-    # logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
-    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) * torch.exp(torch.tensor(temperature))  # [n, n]
+    # 使用模型内部的可学习温度
+    if model is not None and hasattr(model, 'logit_scale'):
+        logit_scale = model.logit_scale.exp() # CLIP 原始实现是 exp(logit_scale)
+        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) * logit_scale
+    else:
+        # 兜底方案，使用默认值或从配置读取
+        print("正在使用默认温度")
+        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
 
 
     # --- 调试信息 (可选，用于监控) ---
-    print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, temperature = {temperature}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
+    if model is not None and hasattr(model, 'logit_scale'):
+        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Learned Temperature = {logit_scale.item():.4f}")
+    else:
+        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {temperature}")
     # --- 调试信息结束 ---
 
     # 3. 创建标签 (直接使用 positive_mask)
