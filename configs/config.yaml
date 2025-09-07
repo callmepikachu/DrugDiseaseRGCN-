@@ -16,6 +16,12 @@ model:
   dropout: 0.1
   num_bases: null  # 如果为null，则不使用basis decomposition
   num_blocks: null  # 如果为null，则不使用block decomposition
+  # --- 新增 MLP 配置 ---
+  link_predictor:
+    type: "mlp" # 或 "l2" 用于切换回旧版本
+    mlp_hidden_dim: 256 # 可以等于或不等于 hidden_dim
+    mlp_layers: 2
+    dropout: 0.1 # 可以复用 model.dropout 或单独设置
 
 # 训练配置
 training:

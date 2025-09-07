@@ -162,13 +162,40 @@ class LinkPredictor(nn.Module):
 
     def __init__(
         self,
-        hidden_dim: int,
-        dropout: float = 0.1
+        hidden_dim: int,           # 这是RGCN输出的每个节点的嵌入维度
+        mlp_hidden_dim: int = None, # MLP内部层的维度，如果为None则使用hidden_dim
+        dropout: float = 0.1,
+        mlp_layers: int = 2        # MLP的层数
     ):
         super(LinkPredictor, self).__init__()
-        # 不需要任何参数，因为是直接计算距离
-        # 为了兼容性，保留 hidden_dim
         self.hidden_dim = hidden_dim
+
+        if mlp_hidden_dim is None:
+            mlp_hidden_dim = hidden_dim
+
+        # 定义MLP层
+        layers = []
+        input_dim = 2 * hidden_dim  # 默认使用拼接方式组合头尾实体嵌入
+
+        for i in range(mlp_layers):
+            if i == mlp_layers - 1:
+                # 最后一层输出1个分数
+                layers.append(nn.Linear(input_dim, 1))
+            else:
+                # 中间层
+                layers.append(nn.Linear(input_dim, mlp_hidden_dim))
+                layers.append(nn.ReLU())
+                layers.append(nn.Dropout(dropout))
+                input_dim = mlp_hidden_dim # 为下一层设置输入维度
+
+        self.mlp = nn.Sequential(*layers)
+
+        # 初始化权重 (可选但推荐)
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+        self.mlp.apply(init_weights)
 
     def forward(
         self,
@@ -176,25 +203,30 @@ class LinkPredictor(nn.Module):
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
     ) -> torch.Tensor:
-        """前向传播，计算负的L2距离作为相似度分数
-
+        """
+        前向传播，通过MLP计算链接分数
+        Args:
+            node_embeddings: 所有节点的嵌入 [num_nodes, hidden_dim]
+            head_indices: 头节点（药物）的索引 [batch_size]
+            tail_indices: 尾节点（疾病）的索引 [batch_size]
         Returns:
             torch.Tensor: existence_scores [batch_size]
         """
-        head_emb = node_embeddings[head_indices]  # [batch_size, D]
-        tail_emb = node_embeddings[tail_indices]  # [batch_size, D]
+        head_emb = node_embeddings[head_indices] # [batch_size, D]
+        tail_emb = node_embeddings[tail_indices] # [batch_size, D]
 
-        # 计算 L2 距离的平方
-        l2_distance_sq = torch.sum((head_emb - tail_emb) ** 2, dim=-1)  # [batch_size]
+        # --- 组合头尾实体嵌入 (这里使用拼接) ---
+        # 你也可以尝试其他方式，如相减 torch.abs(head_emb - tail_emb)
+        # 或点积 head_emb * tail_emb (注意维度匹配)
+        combined_features = torch.cat([head_emb, tail_emb], dim=-1) # [batch_size, 2*D]
 
-        # 返回负距离作为 "分数"，距离越小，分数越高
-        # 注意：这里没有除以 temperature，因为评估时我们只关心排序，不关心具体概率值
-        # 如果希望评估分数与训练时的logits尺度一致，可以除以模型的temperature
-        # existence_scores = -l2_distance_sq / torch.exp(self.model.logit_scale) # 需要传入模型
-        existence_scores = -l2_distance_sq
+        # 通过MLP计算分数
+        scores = self.mlp(combined_features).squeeze(-1) # [batch_size]
 
-        return existence_scores
-
+        # 注意：这里返回的是原始分数(logits)，没有应用sigmoid。
+        # Sigmoid通常在损失计算(如BCE)或最终预测时应用。
+        # 对于clip_loss，它会直接使用这个scores作为logits。
+        return scores
 
 
 class DrugDiseaseRGCN(nn.Module):
@@ -227,8 +259,10 @@ class DrugDiseaseRGCN(nn.Module):
 
         # 简化版链接预测器
         self.link_predictor = LinkPredictor(
-            hidden_dim=hidden_dim,
-            dropout=dropout
+            hidden_dim=self.config['model']['hidden_dim'],
+            mlp_hidden_dim=self.config['model']['hidden_dim'],  # 可以配置
+            dropout=self.config['model']['dropout'],
+            mlp_layers=2  # 可以配置
         )
 
         # --- 关键修复：在这里定义可学习的温度参数 ---
