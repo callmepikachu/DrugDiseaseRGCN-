@@ -22,17 +22,23 @@ from utils import (
 
 class ModelEvaluator:
     """模型评估器"""
-    
+
     def __init__(self, config_path: str, model_path: str):
         self.config = load_config(config_path)
         self.model_path = model_path
         self.device = get_device(self.config['device'])
-        
-        # 加载数据
+
+        # 初始化数据加载器
         self.data_loader = PrimeKGDataLoader(self.config['data']['data_dir'])
+
+        # 先加载数据，以获取 num_nodes 和 num_relations
         self.load_data()
-        
-        # 加载模型
+
+        # 确保关键属性存在
+        if not hasattr(self, 'num_nodes') or not hasattr(self, 'num_relations'):
+            raise RuntimeError("数据加载失败，未能获取 num_nodes 或 num_relations")
+
+        # 然后加载模型
         self.load_model()
     
     def load_data(self):
