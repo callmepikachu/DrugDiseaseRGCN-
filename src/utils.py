@@ -77,8 +77,8 @@ def clip_loss(
     device = drug_embeddings.device
 
     # --- 移除 L2 归一化 ---
-    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
-    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
+    # drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
+    # disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
     # --- 计算 L2 距离矩阵 ---
     # 利用广播机制: ||a - b||^2 = a·a + b·b - 2*a·b
