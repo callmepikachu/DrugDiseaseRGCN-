@@ -63,34 +63,33 @@ def get_device(device_config: str) -> torch.device:
     return device
 
 
+
+
 def clip_loss(
-        drug_embeddings: torch.Tensor,  # [N, D]
-        disease_embeddings: torch.Tensor,  # [M, D]
-        positive_mask: torch.Tensor,  # [N, M]
-        temperature_or_model: Any = 1.0  # <-- 修改参数名，可以是 float 或 nn.Module
+    drug_embeddings: torch.Tensor,  # [N, D]
+    disease_embeddings: torch.Tensor,  # [M, D]
+    positive_mask: torch.Tensor,  # [N, M], bool类型
+    temperature_or_model: Any = 1.0
 ) -> torch.Tensor:
     """
-    多标签版本的 CLIP 损失。
-    positive_mask[i][j] = True 表示 第i个药物 和 第j个疾病 是正样本关系。
+    修正版的多标签CLIP损失。
+    使用 InfoNCE 风格的对比损失，完全遵循CLIP论文思想。
     """
     device = drug_embeddings.device
 
-    # 1. L2 归一化嵌入
+    # 1. L2 归一化嵌入 (与CLIP论文一致)
     drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
     disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
-    # 2. 计算 logits: cosine similarity scaled by temperature
+    # 2. 计算 logits: cosine similarity scaled by temperature (与CLIP论文一致)
     if isinstance(temperature_or_model, torch.nn.Module) and hasattr(temperature_or_model, 'logit_scale'):
-        # 使用可学习温度
         temperature = temperature_or_model.logit_scale.exp()
-        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
         debug_temp = temperature.item()
     else:
-        # 使用固定温度
-        print("正在使用固定温度")
         temperature = float(temperature_or_model)
-        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
         debug_temp = temperature
+
+    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
 
     # --- 调试信息 ---
     print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {debug_temp:.4f}")
@@ -100,16 +99,60 @@ def clip_loss(
     print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
     # --- 调试信息结束 ---
 
-    # 3. 创建标签 (直接使用 positive_mask)
-    labels_drug_to_disease = positive_mask.float()  # [N, M]
-    labels_disease_to_drug = positive_mask.t().float()  # [M, N]
+    # 3. 计算损失 (核心修改：使用CrossEntropyLoss的变体)
 
-    # 4. 计算损失 (使用二元交叉熵，支持多标签)
-    bce_loss = nn.BCEWithLogitsLoss()
+    # 对于每个药物，计算其与所有疾病的相似度，并用positive_mask作为权重
+    loss_drug_to_disease = 0.0
+    valid_drug_count = 0
 
-    loss_drug_to_disease = bce_loss(logits, labels_drug_to_disease)
-    loss_disease_to_drug = bce_loss(logits.t(), labels_disease_to_drug)
+    for i in range(logits.size(0)):
+        logit_row = logits[i]  # [M]
+        pos_mask_row = positive_mask[i]  # [M], bool
 
+        if pos_mask_row.sum() == 0:
+            continue  # 跳过没有正样本的行
+
+        valid_drug_count += 1
+
+        # 创建一个“软标签”或“加权标签”
+        # 方法一：将所有正样本视为等概率的正确答案
+        # 这等价于鼓励模型将概率质量均匀分配给所有正样本
+        target_probs = pos_mask_row.float() / pos_mask_row.sum().float()
+
+        # 计算加权的交叉熵损失
+        # F.cross_entropy 默认期望 target 是 class indices，但我们提供的是概率分布
+        # 所以我们手动计算: -sum(target_probs * log_softmax(logits))
+        log_probs = F.log_softmax(logit_row, dim=0)
+        loss_i = -torch.sum(target_probs * log_probs)
+
+        loss_drug_to_disease += loss_i
+
+    if valid_drug_count > 0:
+        loss_drug_to_disease = loss_drug_to_disease / valid_drug_count
+
+    # 对称损失：对于每个疾病，计算其与所有药物的相似度
+    loss_disease_to_drug = 0.0
+    valid_disease_count = 0
+
+    for j in range(logits.size(1)):
+        logit_col = logits[:, j]  # [N]
+        pos_mask_col = positive_mask[:, j]  # [N], bool
+
+        if pos_mask_col.sum() == 0:
+            continue
+
+        valid_disease_count += 1
+
+        target_probs = pos_mask_col.float() / pos_mask_col.sum().float()
+        log_probs = F.log_softmax(logit_col, dim=0)
+        loss_j = -torch.sum(target_probs * log_probs)
+
+        loss_disease_to_drug += loss_j
+
+    if valid_disease_count > 0:
+        loss_disease_to_drug = loss_disease_to_drug / valid_disease_count
+
+    # 平均损失
     total_loss = (loss_drug_to_disease + loss_disease_to_drug) / 2.0
     return total_loss
 
