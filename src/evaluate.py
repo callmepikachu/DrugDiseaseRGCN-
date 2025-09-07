@@ -187,6 +187,21 @@ class ModelEvaluator:
             existence_y_true = self.test_data['existence_labels'].cpu().numpy()
             existence_y_score = torch.sigmoid(existence_scores).cpu().numpy()
             existence_y_pred = (existence_y_score > 0.5).astype(int)
+            # --- 新增：分析预测分数分布 ---
+            print(f"\n[评估分析] 预测分数分布统计:")
+            print(f"  分数最小值: {existence_y_score.min():.6f}")
+            print(f"  分数最大值: {existence_y_score.max():.6f}")
+            print(f"  分数均值:   {existence_y_score.mean():.6f}")
+            print(f"  分数标准差: {existence_y_score.std():.6f}")
+
+            # 统计极端值比例
+            extreme_high = (existence_y_score > 0.999).sum()
+            extreme_low = (existence_y_score < 0.001).sum()
+            total_samples = len(existence_y_score)
+
+            print(f"  分数 > 0.999 的样本数: {extreme_high} ({extreme_high / total_samples * 100:.2f}%)")
+            print(f"  分数 < 0.001 的样本数: {extreme_low} ({extreme_low / total_samples * 100:.2f}%)")
+            # --- 新增结束 ---
 
             # 计算关系存在性指标
             existence_metrics = calculate_metrics(

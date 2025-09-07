@@ -66,10 +66,10 @@ def get_device(device_config: str) -> torch.device:
 
 
 def clip_loss(
-    drug_embeddings: torch.Tensor,  # [N, D]
-    disease_embeddings: torch.Tensor,  # [M, D]
-    positive_mask: torch.Tensor,  # [N, M], bool类型
-    temperature_or_model: Any = 1.0
+        drug_embeddings: torch.Tensor,  # [N, D]
+        disease_embeddings: torch.Tensor,  # [M, D]
+        positive_mask: torch.Tensor,  # [N, M], bool类型
+        temperature_or_model: Any = 1.0
 ) -> torch.Tensor:
     """
     修正版的多标签CLIP损失。
@@ -115,13 +115,9 @@ def clip_loss(
         valid_drug_count += 1
 
         # 创建一个“软标签”或“加权标签”
-        # 方法一：将所有正样本视为等概率的正确答案
-        # 这等价于鼓励模型将概率质量均匀分配给所有正样本
         target_probs = pos_mask_row.float() / pos_mask_row.sum().float()
 
         # 计算加权的交叉熵损失
-        # F.cross_entropy 默认期望 target 是 class indices，但我们提供的是概率分布
-        # 所以我们手动计算: -sum(target_probs * log_softmax(logits))
         log_probs = F.log_softmax(logit_row, dim=0)
         loss_i = -torch.sum(target_probs * log_probs)
 
@@ -154,6 +150,12 @@ def clip_loss(
 
     # 平均损失
     total_loss = (loss_drug_to_disease + loss_disease_to_drug) / 2.0
+
+    # --- 新增调试：打印两个方向的损失 ---
+    print(f"[Debug CLIP Loss] Loss Drug->Disease: {loss_drug_to_disease:.4f}, Loss Disease->Drug: {loss_disease_to_drug:.4f}")
+    print(f"[Debug CLIP Loss] Total Loss: {total_loss:.4f}")
+    # --- 新增调试结束 ---
+
     return total_loss
 
 def create_negative_samples(

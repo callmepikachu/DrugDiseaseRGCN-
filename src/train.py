@@ -197,14 +197,16 @@ class Trainer:
         
         # 打印模型信息
         print_model_info(self.model)
-        self.model.logit_scale = nn.Parameter(torch.tensor([np.log(0.07)])).to(self.device)
+        self.model.logit_scale = nn.Parameter(torch.tensor([np.log(5.0)])).to(self.device)
         # 优化器
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.config['training']['learning_rate'],
-            weight_decay=self.config['training']['weight_decay']
-        )
-        
+        # 创建参数组
+        base_params = [p for n, p in self.model.named_parameters() if "logit_scale" not in n]
+        temp_param = [p for n, p in self.model.named_parameters() if "logit_scale" in n]
+
+        self.optimizer = optim.Adam([
+            {'params': base_params},
+            {'params': temp_param, 'lr': self.config['training']['learning_rate'] * 0.1}  # 温度参数学习率设为0.1倍
+        ], lr=self.config['training']['learning_rate'], weight_decay=self.config['training']['weight_decay'])
         # 学习率调度器
         scheduler_config = self.config['training']['scheduler']
         if scheduler_config['type'] == 'StepLR':
