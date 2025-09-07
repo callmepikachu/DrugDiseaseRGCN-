@@ -128,20 +128,28 @@ class ModelEvaluator:
             'relation_labels': relation_labels.to(self.device)
         }
 
-    def load_model(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-                   load_path: str, device: torch.device) -> Tuple[int, float, Dict[str, float]]:
+    def load_model(self):
         """加载模型（评估专用版）"""
-        checkpoint = torch.load(load_path, map_location=device, weights_only=False)
+        print("正在加载模型...")
 
-        model.load_state_dict(checkpoint['model_state_dict'])
-        # --- 关键修改：注释掉或移除优化器加载 ---
-        # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # 创建一个临时优化器（仅用于结构匹配，实际不会使用）
+        optimizer = torch.optim.Adam(self.model.parameters())
 
-        epoch = checkpoint['epoch']
-        loss = checkpoint['loss']
-        metrics = checkpoint.get('metrics', {})
+        # 调用 utils.py 中的 load_model 函数
+        epoch, loss, metrics = load_model(
+            self.model,
+            optimizer,
+            self.model_path,
+            self.device
+        )
 
-        return epoch, loss, metrics
+        print(f"已加载模型 (epoch {epoch}, loss: {loss:.4f})")
+        if metrics:
+            print("训练时的最佳指标: ")
+            for metric, value in metrics.items():
+                print(f"  {metric}: {value:.4f}")
+
+
     def evaluate(self):
         """评估模型"""
         print("正在评估模型...")
