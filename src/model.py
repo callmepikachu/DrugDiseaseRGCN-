@@ -158,7 +158,7 @@ class MultiTaskLinkPredictor(nn.Module):
 
 
 class LinkPredictor(nn.Module):
-    """简化版链接预测器：只预测关系存在性"""
+    """基于L2距离的链接预测器"""
 
     def __init__(
         self,
@@ -166,27 +166,9 @@ class LinkPredictor(nn.Module):
         dropout: float = 0.1
     ):
         super(LinkPredictor, self).__init__()
-
+        # 不需要任何参数，因为是直接计算距离
+        # 为了兼容性，保留 hidden_dim
         self.hidden_dim = hidden_dim
-
-        # 特征提取层
-        self.feature_layers = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1)  # 最后一层直接输出分数
-        )
-
-        self._init_parameters()
-    
-    def _init_parameters(self):
-        for layer in self.feature_layers:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                nn.init.zeros_(layer.bias)
 
     def forward(
         self,
@@ -194,15 +176,22 @@ class LinkPredictor(nn.Module):
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
     ) -> torch.Tensor:
-        """前向传播
+        """前向传播，计算负的L2距离作为相似度分数
 
         Returns:
             torch.Tensor: existence_scores [batch_size]
         """
-        head_emb = node_embeddings[head_indices]
-        tail_emb = node_embeddings[tail_indices]
-        combined = torch.cat([head_emb, tail_emb], dim=-1)
-        existence_scores = self.feature_layers(combined).squeeze(-1)
+        head_emb = node_embeddings[head_indices]  # [batch_size, D]
+        tail_emb = node_embeddings[tail_indices]  # [batch_size, D]
+
+        # 计算 L2 距离的平方
+        l2_distance_sq = torch.sum((head_emb - tail_emb) ** 2, dim=-1)  # [batch_size]
+
+        # 返回负距离作为 "分数"，距离越小，分数越高
+        # 注意：这里没有除以 temperature，因为评估时我们只关心排序，不关心具体概率值
+        # 如果希望评估分数与训练时的logits尺度一致，可以除以模型的temperature
+        # existence_scores = -l2_distance_sq / torch.exp(self.model.logit_scale) # 需要传入模型
+        existence_scores = -l2_distance_sq
 
         return existence_scores
 
@@ -243,7 +232,7 @@ class DrugDiseaseRGCN(nn.Module):
         )
 
         # --- 关键修复：在这里定义可学习的温度参数 ---
-        self.logit_scale = nn.Parameter(torch.tensor([np.log(5.0)]))
+        self.logit_scale = nn.Parameter(torch.tensor([np.log(50.0)]))
         # --- 关键修复结束 ---
 
     def forward(
