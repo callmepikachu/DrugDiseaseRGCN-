@@ -11,8 +11,8 @@ data:
 
 # 模型配置
 model:
-  hidden_dim: 128
-  num_layers: 2
+  hidden_dim: 256
+  num_layers: 3
   dropout: 0.1
   num_bases: null  # 如果为null，则不使用basis decomposition
   num_blocks: null  # 如果为null，则不使用block decomposition
@@ -22,8 +22,8 @@ training:
   batch_size: 512
   learning_rate: 0.001
   weight_decay: 0.00001
-  num_epochs: 100
-  patience: 20  # early stopping patience
+  num_epochs: 200
+  patience: 50  # early stopping patience
   gradient_clip: 1.0
   
   # 学习率调度
