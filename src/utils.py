@@ -72,16 +72,22 @@ def clip_loss(
         temperature_or_model: Any = 1.0
 ) -> torch.Tensor:
     """
-    修正版的多标签CLIP损失。
-    使用 InfoNCE 风格的对比损失，完全遵循CLIP论文思想。
+    使用 L2 距离的多标签CLIP损失。
     """
     device = drug_embeddings.device
 
-    # 1. L2 归一化嵌入 (与CLIP论文一致)
-    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
-    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
+    # --- 移除 L2 归一化 ---
+    # drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
+    # disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
-    # 2. 计算 logits: cosine similarity scaled by temperature (与CLIP论文一致)
+    # --- 计算 L2 距离矩阵 ---
+    # 利用广播机制: ||a - b||^2 = a·a + b·b - 2*a·b
+    drug_sq = torch.sum(drug_embeddings ** 2, dim=1, keepdim=True)  # [N, 1]
+    disease_sq = torch.sum(disease_embeddings ** 2, dim=1, keepdim=True)  # [M, 1]
+    dot_product = torch.matmul(drug_embeddings, disease_embeddings.t())  # [N, M]
+    l2_distance_sq = drug_sq + disease_sq.t() - 2 * dot_product  # [N, M]
+
+    # 获取温度参数
     if isinstance(temperature_or_model, torch.nn.Module) and hasattr(temperature_or_model, 'logit_scale'):
         temperature = temperature_or_model.logit_scale.exp()
         debug_temp = temperature.item()
@@ -89,7 +95,8 @@ def clip_loss(
         temperature = float(temperature_or_model)
         debug_temp = temperature
 
-    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
+    # 使用负的 L2 距离作为 logits (距离越小，值越大)
+    logits = -l2_distance_sq / temperature
 
     # --- 调试信息 ---
     print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {debug_temp:.4f}")
@@ -494,18 +501,7 @@ def calculate_mrr(
     k_values: List[int] = [10, 50]
 ) -> float:
     """
-    计算MRR指标
-    
-    Args:
-        node_embeddings: 节点嵌入 [num_nodes, embedding_dim]
-        test_edge_index: 测试边索引 [2, num_test_edges]
-        test_existence_labels: 测试标签 [num_test_edges]
-        mappings: 节点映射字典
-        target_entity: 目标实体类型 "drug" 或 "disease"
-        k_values: 用于扩展计算 MRR@k
-        
-    Returns:
-        float: MRR值
+    使用 L2 距离计算MRR指标
     """
     # 筛选正样本
     positive_mask = test_existence_labels == 1
@@ -530,13 +526,17 @@ def calculate_mrr(
         # 获取查询实体嵌入
         q_emb = node_embeddings[q_idx].unsqueeze(0)  # [1, D]
         
-        # 计算相似度得分
-        scores = torch.matmul(
-            F.normalize(q_emb, p=2, dim=1), 
-            F.normalize(candidate_embeddings, p=2, dim=1).t()
-        ).squeeze()  # [num_candidates]
+        # --- 计算 L2 距离得分 ---
+        # q_emb: [1, D], candidate_embeddings: [num_candidates, D]
+        q_sq = torch.sum(q_emb ** 2, dim=1, keepdim=True)  # [1, 1]
+        cand_sq = torch.sum(candidate_embeddings ** 2, dim=1, keepdim=True)  # [num_candidates, 1]
+        dot_prod = torch.matmul(q_emb, candidate_embeddings.t())  # [1, num_candidates]
+        l2_dist_sq = q_sq + cand_sq.t() - 2 * dot_prod  # [1, num_candidates]
+        # 使用负距离作为 "scores"，距离越小，分数越高
+        scores = -l2_dist_sq.squeeze()  # [num_candidates]
+        # --- 计算 L2 距离得分 结束 ---
         
-        # 降序排序得分
+        # 降序排序得分 (分数越高，排名越前)
         sorted_candidate_indices = candidate_indices[torch.argsort(scores, descending=True)]
         
         # 找到与 q_idx 相连的真实正样本候选索引
