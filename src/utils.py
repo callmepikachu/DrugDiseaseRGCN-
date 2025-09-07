@@ -92,7 +92,7 @@ def clip_loss(
 
     # --- 调试信息 (可选，用于监控) ---
     if model is not None and hasattr(model, 'logit_scale'):
-        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Learned Temperature = {logit_scale.item():.4f}")
+        print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Learned Temperature = {temperature}")
     else:
         print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {temperature}")
     # --- 调试信息结束 ---
