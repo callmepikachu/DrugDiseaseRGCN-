@@ -1,7 +1,7 @@
 """
 RGCN模型定义
 """
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -212,7 +212,7 @@ class DrugDiseaseRGCN(nn.Module):
     def __init__(
         self,
         num_nodes: int,
-        num_relations: int, # 这个参数可以保留，因为RGCN编码器还需要它
+        num_relations: int,
         hidden_dim: int = 128,
         num_layers: int = 2,
         dropout: float = 0.1, 
@@ -225,7 +225,7 @@ class DrugDiseaseRGCN(nn.Module):
         self.num_relations = num_relations
         self.hidden_dim = hidden_dim
         
-        # RGCN编码器 (保持不变)
+        # RGCN编码器
         self.encoder = RGCNEncoder(
             num_nodes=num_nodes,
             num_relations=num_relations,
@@ -235,13 +235,17 @@ class DrugDiseaseRGCN(nn.Module):
             num_bases=num_bases,
             num_blocks=num_blocks
         )
-        
-        # 简化版链接预测器 (只预测存在性)
+
+        # 简化版链接预测器
         self.link_predictor = LinkPredictor(
             hidden_dim=hidden_dim,
             dropout=dropout
         )
-    
+
+        # --- 关键修复：在这里定义可学习的温度参数 ---
+        self.logit_scale = nn.Parameter(torch.tensor([np.log(1.0)]))  # 初始化为 ln(1.0) = 0.0
+        # --- 关键修复结束 ---
+
     def forward(
         self,
         x: torch.Tensor,
@@ -249,30 +253,29 @@ class DrugDiseaseRGCN(nn.Module):
         edge_type: torch.Tensor,
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
-    ) -> torch.Tensor: # 返回值类型改为 torch.Tensor
+    ) -> torch.Tensor:
         node_embeddings = self.encoder(x, edge_index, edge_type)
         existence_scores = self.link_predictor(
             node_embeddings,
             head_indices,
             tail_indices
         )
-        return existence_scores # 只返回一个值
+        return existence_scores
     
     def predict_links(
         self,
         node_embeddings: torch.Tensor,
         head_indices: torch.Tensor,
         tail_indices: torch.Tensor
-    ) -> torch.Tensor: # 返回值类型改为 torch.Tensor
+    ) -> torch.Tensor:
         return self.link_predictor(
             node_embeddings,
             head_indices,
             tail_indices
         )
-    def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
-        """编码节点"""
-        return self.encoder(x, edge_index, edge_type)
 
+    def encode(self, x: torch.Tensor, edge_index: torch.Tensor, edge_type: torch.Tensor) -> torch.Tensor:
+        return self.encoder(x, edge_index, edge_type)
 class DistMultDecoder(nn.Module):
     """DistMult解码器（替代方案）"""
     
