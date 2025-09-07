@@ -100,10 +100,10 @@ def clip_loss(
 
     # --- 调试信息 ---
     print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, Temperature = {debug_temp:.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
-    print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
+    # print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
+    # print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
+    # print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
+    # print(f"[Debug MultiLabel CLIP Loss] Logits max: {logits.max().item():.4f}")
     # --- 调试信息结束 ---
 
     # 3. 计算损失 (核心修改：使用CrossEntropyLoss的变体)
