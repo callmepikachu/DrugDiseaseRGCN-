@@ -86,7 +86,8 @@ python src/train.py --config configs/config.yaml
 
 ```bash
 # 评估模型性能
-python src/evaluate.py --model_path checkpoints/best_model.pth
+python src/evaluate.py  --model_path checkpoints/drugdisease_rgcn_best.pth
+
 ```
 
 ## 数据集信息

@@ -232,7 +232,7 @@ class DrugDiseaseRGCN(nn.Module):
         )
 
         # --- 关键修复：在这里定义可学习的温度参数 ---
-        self.logit_scale = nn.Parameter(torch.tensor([np.log(50.0)]))
+        self.logit_scale = nn.Parameter(torch.tensor([np.log(25.0)]))
         # --- 关键修复结束 ---
 
     def forward(
