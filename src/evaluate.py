@@ -172,6 +172,17 @@ class ModelEvaluator:
             )
             # --- 关键修改结束 ---
 
+            # --- 新增：打印温度参数 ---
+            if hasattr(self.model, 'logit_scale'):
+                current_logit_scale = self.model.logit_scale.item()
+                current_temperature = torch.exp(self.model.logit_scale).item()
+                print(f"\n[评估分析] 模型温度参数:")
+                print(f"  logit_scale: {current_logit_scale:.6f}")
+                print(f"  temperature: {current_temperature:.6f}")
+            else:
+                print("\n[评估分析] 模型未找到可学习温度参数 'logit_scale'")
+            # --- 新增结束 ---
+
             # # 多任务预测 (旧代码，已注释)
             # existence_scores, relation_logits = self.model.predict_links(
             #     node_embeddings,
