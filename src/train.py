@@ -197,7 +197,7 @@ class Trainer:
         
         # 打印模型信息
         print_model_info(self.model)
-        self.model.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07)).to(self.device)
+        self.model.logit_scale = nn.Parameter(torch.tensor([np.log(0.07)])).to(self.device)
         # 优化器
         self.optimizer = optim.Adam(
             self.model.parameters(),

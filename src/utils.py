@@ -82,8 +82,8 @@ def clip_loss(
 
     # 使用模型内部的可学习温度
     if model is not None and hasattr(model, 'logit_scale'):
-        logit_scale = model.logit_scale.exp() # CLIP 原始实现是 exp(logit_scale)
-        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) * logit_scale
+        temperature = model.logit_scale.exp() # 现在 temperature 是一个很大的值，但我们要用它做除法
+        logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
     else:
         # 兜底方案，使用默认值或从配置读取
         print("正在使用默认温度")
