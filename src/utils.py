@@ -76,14 +76,16 @@ def clip_loss(
     device = drug_embeddings.device
 
     # # 1. L2 归一化嵌入
-    # drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
-    # disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
+    drug_embeddings = F.normalize(drug_embeddings, p=2, dim=1)
+    disease_embeddings = F.normalize(disease_embeddings, p=2, dim=1)
 
     # 2. 计算 logits: cosine similarity scaled by temperature
-    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
+    # logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature  # [N, M]
+    logits = torch.matmul(drug_embeddings, disease_embeddings.t()) * torch.exp(torch.tensor(temperature))  # [n, n]
+
 
     # --- 调试信息 (可选，用于监控) ---
-    print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}")
+    print(f"[Debug MultiLabel CLIP Loss] Logits shape: {logits.shape}, temperature = {temperature}")
     print(f"[Debug MultiLabel CLIP Loss] Logits mean: {logits.mean().item():.4f}")
     print(f"[Debug MultiLabel CLIP Loss] Logits std: {logits.std().item():.4f}")
     print(f"[Debug MultiLabel CLIP Loss] Logits min: {logits.min().item():.4f}")
