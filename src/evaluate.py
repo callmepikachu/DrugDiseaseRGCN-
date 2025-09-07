@@ -38,9 +38,14 @@ class ModelEvaluator:
         if not hasattr(self, 'num_nodes') or not hasattr(self, 'num_relations'):
             raise RuntimeError("数据加载失败，未能获取 num_nodes 或 num_relations")
 
-        # 然后加载模型
+        self.model = DrugDiseaseRGCN(
+            num_nodes=self.num_nodes,
+            num_relations=self.num_relations,
+            **self.config['model']
+        ).to(self.device)
+        # 然后加载模型权重
         self.load_model()
-    
+
     def load_data(self):
         """加载数据"""
         print("正在加载数据...")
@@ -138,23 +143,19 @@ class ModelEvaluator:
         """加载模型（评估专用版）"""
         print("正在加载模型...")
 
-        # 创建一个临时优化器（仅用于结构匹配，实际不会使用）
-        optimizer = torch.optim.Adam(self.model.parameters())
+        # 直接加载模型权重，无需创建优化器
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
 
-        # 调用 utils.py 中的 load_model 函数
-        epoch, loss, metrics = load_model(
-            self.model,
-            optimizer,
-            self.model_path,
-            self.device
-        )
+        epoch = checkpoint.get('epoch', 'N/A')
+        loss = checkpoint.get('loss', 'N/A')
+        metrics = checkpoint.get('metrics', {})
 
-        print(f"已加载模型 (epoch {epoch}, loss: {loss:.4f})")
+        print(f"已加载模型 (epoch {epoch}, loss: {loss})")
         if metrics:
             print("训练时的最佳指标: ")
             for metric, value in metrics.items():
                 print(f"  {metric}: {value:.4f}")
-
 
     def evaluate(self):
         """评估模型"""
