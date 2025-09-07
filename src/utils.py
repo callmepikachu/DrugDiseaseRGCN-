@@ -87,6 +87,7 @@ def clip_loss(
         debug_temp = temperature.item()
     else:
         # 使用固定温度
+        print("正在使用固定温度")
         temperature = float(temperature_or_model)
         logits = torch.matmul(drug_embeddings, disease_embeddings.t()) / temperature
         debug_temp = temperature
